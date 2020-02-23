@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 setup(name='bozepy',
       version='1.0',
-      description='Data reduction software for MSU's Celestron+SBIG astronomical data',
+      description='Data reduction software for MSUs Celestron+SBIG astronomical data',
       author='David Nidever',
       author_email='dnidever@montana.edu',
       url='https://github.com/dnidever/bozepy',
