@@ -80,7 +80,32 @@ def overscan(im,head):
     return out, head2
     
 def masterbias(files,outfile=None,clobber=True):
-    """ Load the bias images.  Overscan correct and trim them.  Then average them."""
+    """
+    Load the bias images.  Overscan correct and trim them.  Then average them.
+
+    Parameters
+    ----------
+    files : list
+        List of bias FITS files.
+    outfile : string, optional
+        Filename to write the master bias image to.
+    clobber : bool, optional
+        If the output file already exists, then overwrite it.
+
+    Returns
+    -------
+    aim : numpy image
+        The 2D master bias image.
+    ahead : header dictionary
+        The master bias header.
+
+    Example
+    -------
+
+    bias, bhead = masterbias(bias_files)
+
+    """
+
     nfiles = len(files)
     imarr = np.zeros((2712, 3388, nfiles),float)
     for i in range(nfiles):
@@ -111,7 +136,32 @@ def overscanzero(im,head,zero):
     return im2 - zero
 
 def masterdark(files,zero,outfile=None,clobber=True):
-    """ Load the bias images.  Overscan correct and trim them.  zero subtract.  Then average them."""
+    """
+    Load the dark images.  Overscan correct and trim them.  zero subtract.  Then average them.
+
+    Parameters
+    ----------
+    files : list
+        List of dark FITS files.
+    outfile : string, optional
+        Filename to write the master dark image to.
+    clobber : bool, optional
+        If the output file already exists, then overwrite it.
+
+    Returns
+    -------
+    aim : numpy image
+        The 2D master dark image.
+    ahead : header dictionary
+        The master dark header.
+
+    Example
+    -------
+
+    dark, dhead = masterdark(dark_files)
+
+    """
+
     nfiles = len(files)
     imarr = np.zeros((2712, 3388, nfiles),float)
     for i in range(nfiles):
@@ -148,8 +198,33 @@ def overscantrimzerodark(im,head,zero,dark):
     im2 -= dark*head['exptime']
     return im2
 
-def masterflat(files,zero,dark):
-    """ Load the bias images.  Overscan correct and trim them.  Then average them."""
+def masterflat(files,zero,dark,outfile=None,clobber=True):
+    """
+    Load the flat images.  Overscan correct and trim them.  Bias and dark subtract. Then divide by median and average them.
+
+    Parameters
+    ----------
+    files : list
+        List of flat FITS files.
+    outfile : string, optional
+        Filename to write the master flat image to.
+    clobber : bool, optional
+        If the output file already exists, then overwrite it.
+
+    Returns
+    -------
+    aim : numpy image
+        The 2D master flat image.
+    ahead : header dictionary
+        The master flat header.
+
+    Example
+    -------
+
+    flat, fhead = masterflat(flat_files)
+
+    """
+
     nfiles = len(files)
     imarr = np.zeros((2712, 3388, nfiles),float)
     for i in range(nfiles):
@@ -161,10 +236,54 @@ def masterflat(files,zero,dark):
         ahead['CMB'+str(i+1)] = files[i]
     aim = np.mean(imarr,axis=2)
     ahead['NCOMBINE'] = nfiles
+
+    # Output file
+    if outfile is not None:
+        if os.path.exists(outfile):
+            if clobber is False:
+                raise ValueError(outfile+' already exists and clobber=False')
+            else:
+                os.remove(outfile)
+        print('Writing master flat to '+outfile)
+        hdu = fits.PrimaryHDU(aim,ahead).writeto(outfile)
+
     return aim, ahead
 
 def ccdproc(data,head=None,zero=None,dark=None,flat=None,outfile=None,clobber=True):
-    """ Overscan subtract, trim, subtract master zero, subtract master dark, flat field"""
+    """
+    Overscan subtract, trim, subtract master zero, subtract master dark, flat field.
+
+    Parameters
+    ----------
+    data : list or numpy 2D array
+        This can either be a list of image filenames or a 2D image.
+    head : header dictionary, optional
+        The header if an image is input.
+    zero : filename or numpy 2D array, optional
+        The master bias.  Either the 2D image or the filename.
+    dark : filename or numpy 2D array, optional
+        The master dark.  Either the 2D image or the filename.
+    flat : filename or numpy 2D array, optional
+        The master flat.  Either the 2D image or the filename.
+    outfile : string, optional
+        Filename to write the processed image to.
+    clobber : bool, optional
+        If the output file already exists, then overwrite it.
+
+    Returns
+    -------
+    fim : numpy image
+        The 2D processed image.
+    fhead : header dictionary
+        The header for the processed image.
+
+    Example
+    -------
+
+    flat, fhead = ccdproc(files,zero,dark,flat)
+
+    """
+
     # Filename input
     if type(data) is str:
         if os.path.exists(data):
