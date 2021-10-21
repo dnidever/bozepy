@@ -5,7 +5,7 @@ Examples
 
 Running doppler
 ===============
-The simplest way to run |Doppler| is with the command-line script ``doppler``.  The only required argument is the name of a spectrum fits file.
+The simplest way to run |Bozepy| is with the command-line script ``doppler``.  The only required argument is the name of a spectrum fits file.
 
 .. code-block:: bash
 
@@ -13,7 +13,7 @@ The simplest way to run |Doppler| is with the command-line script ``doppler``.  
 
 This will create an output file called ``spectrum_doppler.fits``.
 
-By default, |Doppler| doesn't print anything to the screen.  So let's set the ``--verbose`` or ``-v`` parameter.
+By default, |Bozepy| doesn't print anything to the screen.  So let's set the ``--verbose`` or ``-v`` parameter.
 
 .. code-block:: bash
 		
@@ -96,7 +96,7 @@ to get a PDF just use ``--figfile spectrum_dopfit.pdf``.
 Using a Payne Model
 -------------------
 
-By default, |Doppler| uses a Cannon model fitting ``Teff, logg, [Fe/H] and RV``.  To use a Payne model instead,
+By default, |Bozepy| uses a Cannon model fitting ``Teff, logg, [Fe/H] and RV``.  To use a Payne model instead,
 just set the ``--payne`` parameter.
 
 .. code-block:: bash
@@ -183,7 +183,7 @@ just set the ``--payne`` parameter.
     dt = 11.10 sec.
     Writing output to spectrum_doppler.fits
 
-By default, |Doppler| fits the parameters ``Teff, logg, [Fe/H], [alpha/H], and RV`` with a Payne model.
+By default, |Bozepy| fits the parameters ``Teff, logg, [Fe/H], [alpha/H], and RV`` with a Payne model.
 But the parameters can be set using the ``--fitpars`` parameter with a comma-separated list of parameter
 names (with no spaces).  Note that all abundance names need to end with ``_h`` such as ``fe_h``,
 ``alpha_h`` and ``c_h``.  To fit the carbon abundance as well, you would do,
@@ -228,17 +228,17 @@ The current Payne model has 33 labels (Teff, logg, Vmicro, [C/H], [N/H], [O/H], 
 Jointly fitting spectra
 -----------------------
 
-|Doppler| can fit mulitple spectra of the same star simultaneously.  It will fit a single set of labels and separate
+|Bozepy| can fit mulitple spectra of the same star simultaneously.  It will fit a single set of labels and separate
 RVs for each spectrum.  To use this option, set the ``--joint`` or ``j`` parameters.  You also need to give the
 names of the mulitiple spectrum files.  You can give these on the command list, e.g. ``doppler spectrum1.fits spectrum2.fits -j``,
-or you can put the names of the files in an ASCII list file (one per line) and give that to |Doppler|.  To use a list, be sure
+or you can put the names of the files in an ASCII list file (one per line) and give that to |Bozepy|.  To use a list, be sure
 to also set the ``--list`` or ``-l`` parameter.
 
 .. code-block:: bash
 
     doppler speclist.txt -v -j -l
 
-    --- Running Doppler Jointfit on 3 spectra ---
+    --- Running Bozepy Jointfit on 3 spectra ---
 
     Loading the spectra
     Spectrum   1:  apVisit-r13-9289-58006-107.fits  S/N= 102.4 
@@ -318,16 +318,16 @@ to also set the ``--list`` or ``-l`` parameter.
     dt = 13.05 sec.
     Writing output to apVisit-r13-9289-58006-107_doppler.fits
 	
-|Doppler| first fits each spectrum separately.  Then it finds weighted stellar parameters and Vhelio.  Finally,
+|Bozepy| first fits each spectrum separately.  Then it finds weighted stellar parameters and Vhelio.  Finally,
 it fits a single set of stellar parameters and an RV for each spectrum to all spectra simultaneously.
     
     
-Running |Doppler| from python
+Running |Bozepy| from python
 =============================
 
-All of the |Doppler| functionality is also available directory from python.
+All of the |Bozepy| functionality is also available directory from python.
 
-First, import |Doppler| and read in the example spectrum.
+First, import |Bozepy| and read in the example spectrum.
 
 .. code-block:: python
 
@@ -374,7 +374,7 @@ Now fit the spectrum:
 	out,model,specm = doppler.rv.fit(spec)
 
 The output will be a table with the final results, the best-fitting model spectrum, and the masked and tweaked
-version of the observed spectrum used internall by |Doppler| for the fitting.
+version of the observed spectrum used internall by |Bozepy| for the fitting.
 
 
 To jointly fit spectra, you want to load all of the spectra into a list and then run ``jointfit()``.
