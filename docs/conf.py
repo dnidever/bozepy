@@ -142,7 +142,7 @@ html_title = '{0} v{1}'.format(project, release)
 htmlhelp_basename = project + 'doc'
 
 html_static_path = ['_static']
-html_style = 'doppler.css'
+html_style = 'bozepy.css'
 
 # -- Options for LaTeX output -------------------------------------------------
 
