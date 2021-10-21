@@ -184,8 +184,9 @@ def overscan(im,head,verbose=False):
     return out, head2
 
 def fixpixconv(im,mask,yind,xind,filt):
-    np,np = filt.shape
-    nh = np//2
+    ny,nx = im.shape
+    npix,npix = filt.shape
+    nh = npix//2
     # image indices
     ylo = np.maximum(yind-nh,0)
     yhi = np.minimum(yind+nh+1,ny)
@@ -209,9 +210,8 @@ def fixpix(im,mask,head,verbose=False):
     """ Interpolate over bad pixels."""
     ny,nx = im.shape
     
-    ind, = np.where(mask>0)
-    nind = len(ind)
-    ind2 = np.unravel_index(ind,fim.shape)
+    yind,xind = np.where(mask>0)
+    nind = len(xind)
     # Make filters
     xx,yy = np.meshgrid(np.arange(3),np.arange(3))
     filt3 = np.exp(-0.5*((xx-1)**2+(yy-1)**2)/1.0**2)
@@ -219,24 +219,26 @@ def fixpix(im,mask,head,verbose=False):
     filt7 = np.exp(-0.5*((xx-3)**2+(yy-3)**2)/1.0**2)
     xx,yy = np.meshgrid(np.arange(11),np.arange(11))
     filt11 = np.exp(-0.5*((xx-5)**2+(yy-5)**2)/1.0**2)
+    
     # Loop over pixels
     nfix = 0
     for i in range(nind):
-        yind,xind = ind2[i]
+        yind1 = yind[i]
+        xind1 = xind[i]
         # convolve with filter
-        new = fixpixconv(im,mask,yind,xind,filt3)
+        new = fixpixconv(im,mask,yind1,xind1,filt3)
         if new is None:
-            new = fixpixconv(im,mask,yind,xind,filt7)
+            new = fixpixconv(im,mask,yind1,xind1,filt7)
         if new is None:
-            new = fixpixconv(im,mask,yind,xind,filt11)
+            new = fixpixconv(im,mask,yind1,xind1,filt11)
         if new is not None:
-            im[yind,xind] = new
-            mask[yind,xind] += 4
+            im[yind1,xind1] = new
+            mask[yind1,xind1] += 4
             nfix += 1
             
     head['FIXPIX'] = time.ctime()+' FIXPIX: '+str(nfix)+' pixels interpolated over'
     if verbose:
-        print(head['FIXPIX'])
+        print(time.ctime()+' Fixpix: '+str(nfix)+' pixels interpolated over')
     
     return im,mask,head
 
@@ -310,7 +312,8 @@ def masterbias(files,med=False,outfile=None,clobber=True,verbose=False):
         aim = totim/nfiles
         ahead['HISTORY'] = 'Mean combine'
     ahead['NCOMBINE'] = nfiles
-    ahead['HISTORY'] = time.ctime()+' bias combine'    
+    ahead['HISTORY'] = time.ctime()+' bias combine'
+    aim = aim.astype(np.float32)  # convert to 32 bit    
     # Output file
     if outfile is not None:
         if os.path.exists(outfile):
@@ -405,7 +408,8 @@ def masterdark(files,zero,med=False,outfile=None,clobber=True,verbose=False):
     # Make sure they are all non-negative
     aim = np.maximum(aim,0)
     ahead['NCOMBINE'] = nfiles
-    ahead['HISTORY'] = time.ctime()+' dark combine'      
+    ahead['HISTORY'] = time.ctime()+' dark combine'
+    aim = aim.astype(np.float32)  # convert to 32 bit    
     # Output file
     if outfile is not None:
         if os.path.exists(outfile):
@@ -504,7 +508,8 @@ def masterflat(files,zero,dark,med=False,outfile=None,clobber=True,verbose=False
         aim = totim / nfiles
         ahead['HISTORY'] = 'Mean combine'
     ahead['NCOMBINE'] = nfiles
-    ahead['HISTORY'] = time.ctime()+' flat combine'          
+    ahead['HISTORY'] = time.ctime()+' flat combine'
+    aim = aim.astype(np.float32)  # convert to 32 bit
     # Output file
     if outfile is not None:
         if os.path.exists(outfile):
@@ -656,250 +661,280 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
 
     """
 
-    # Filename input
-    if type(data) is str:
-        if os.path.exists(data):
-            if verbose:
-                print('Loading '+data) 
-            im,head = fits.getdata(data,0,header=True)
-        else:
-            raise ValueError(data+' NOT FOUND')
-    # Image input
-    else:
+    # Check the inputs
+    if type(data) is str:     # filname input
+        files = [data]
+    elif type(data) is list:  # list of files input
+        files = data
+    elif type(data) is np.ndarray:  # image input
+        files = ['']
         im = data
-        if head is None:
-            raise ValueError('Header not input')
-
-    # Get calibray library information
+    else:
+        raise ValueError('Input data not understood')
+    nfiles = len(files)
+    
+    # Get calibration library information
     cals = library()
 
-        
-    # Fix header, if necessary
-    if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
-        head = fixheader(head)
-        
-    # Overscan subtract and trim
-    #---------------------------
-    if head.get('OVERSCAN') is None:
-        fim,fhead = overscan(im,head,verbose=verbose)
+    # Load calibration files
+    #-----------------------
+    # -- BPM ---
+    if type(bpm) is str:
+        if os.path.exists(bpm):
+            bpmim,bpmhead = fits.getdata(bpm,0,header=True)
+        else:
+            raise ValueError(bpm+' NOT FOUND')
+    # Use calibration library file
+    elif bpm is True:
+        bpmind, = np.where(cals['type']=='bpm')
+        if len(bpmind)==0:
+            raise ValueError('No library BPM found')
+        bpmfile = cals['file'][bpmind[0]]
+        if os.path.exists(bpmfile):
+            bpmim,bpmhead = fits.getdata(bpmfile,0,header=True)
+        else:
+            raise ValueError('Library '+bpmfile+' file NOT FOUND')
+    # Image input
     else:
-        print('Already OVERSCAN corrected')
-        fim = im.copy()
-        fhead = head.copy()
+        bpmim = bpm
+    # --- ZERO ---
+    # Filename input
+    if type(zero) is str:
+        if os.path.exists(zero):
+            zeroim,zerohead = fits.getdata(zero,0,header=True)
+        else:
+            raise ValueError(zero+' NOT FOUND')
+    # Use calibration library file
+    elif zero is True:
+        zeroind, = np.where((cals['type']=='bias') & (cals['master']==True))
+        if len(zeroind)==0:
+            raise ValueError('No library master Zero found for this image')                
+        zerofile = cals['file'][zeroind[0]]
+        if os.path.exists(zerofile):
+            zezroim,zerohead = fits.getdata(zerofile,0,header=True)
+        else:
+            raise ValueError('Library '+zerofile+' file NOT FOUND')                   
+    # Image input
+    else:
+        zeroim = zero
+    # --- DARK ---    
+    # Filename input
+    if type(dark) is str:
+        if os.path.exists(dark):
+            darkim,darkhead = fits.getdata(dark,0,header=True)
+        else:
+            raise ValueError(dark+' NOT FOUND')
+    # Use calibration library file
+    elif dark is True:
+        darkind, = np.where((cals['type']=='dark') & (cals['master']==True))
+        if len(darkind)==0:
+            raise ValueError('No library master Dark found for this image')                
+        darkfile = cals['file'][darkind[0]]
+        if os.path.exists(darkfile):
+            darkim,darkhead = fits.getdata(darkfile,0,header=True)
+        else:
+            raise ValueError('Library '+darkfile+' file NOT FOUND')                   
+    # Image input
+    else:
+        darkim = dark
 
-    # Initialize error and mask image
-    error = np.zeros(fim.shape,float)
-    mask = np.zeros(fim.shape,np.uint)
+    # FLATS are filter-specific
 
-    # Bad pixel mask
-    #---------------
-    if (bpm is not None):
-        # Not corrected yet
-        if head.get('BPMCOR') is None:
-            # Filename input
-            if type(bpm) is str:
-                if os.path.exists(bpm):
-                    bpmim,bpmhead = fits.getdata(bpm,0,header=True)
-                else:
-                    raise ValueError(bpm+' NOT FOUND')
-            # Use calibration library file
-            elif bpm is True:
-                bpmind, = np.where(cals['type']=='bpm')
-                if len(bpmind)==0:
-                    raise ValueError('No library BPM found for this image')                
-                bpmfile = cals['file'][bpmind[0]]
-                if os.path.exists(bpmfile):
-                    bpmim,bpmhead = fits.getdata(bpmfile,0,header=True)
-                else:
-                    raise ValueError('Library '+bpmfile+' file NOT FOUND')                    
-            # Image input
-            else:
-                bpmim = bpm
-            # Check sizes
-            if bpmim.shape != fim.shape:
-                raise ValueError('BPM shape and image shape do not match')
-            # Do the correction
-            nbadbpm = np.sum(bpm>0)
-            if nbadbpm>0:
-                fim[bpm>0] = 0.0
-                mask[bpm>0] = 1
-                error[bpm>0] = 1e30
-            fhead['BPMCOR'] = time.ctime()+' masked '+str(nbadbpm)+' bad pixels'
-            if verbose:
-                print(time.ctime()+' masked '+str(nbadbpm)+' bad pixels')
-        # Corrected already
-        else:
-            print('Already ZERO subtracted')
-            
-    # Set mask and error for saturated pixels
-    #----------------------------------------
-    saturation = head.get('saturate')
-    if saturation is None:
-        saturation = 64000
-        sat = (fim>saturation) & (mask==0)
-        mask[sat] = 2
-        error[sat] = 1e30
-    
-    # Subtract master bias
-    #---------------------
-    if (zero is not None):
-        # Not corrected yet
-        if head.get('ZEROCOR') is None:
-            # Filename input
-            if type(zero) is str:
-                if os.path.exists(zero):
-                    zeroim,zerohead = fits.getdata(zero,0,header=True)
-                else:
-                    raise ValueError(zero+' NOT FOUND')
-            # Use calibration library file
-            elif zero is True:
-                zeroind, = np.where((cals['type']=='bias') & (cals['master']==True))
-                if len(zeroind)==0:
-                    raise ValueError('No library master Zero found for this image')                
-                zerofile = cals['file'][zeroind[0]]
-                if os.path.exists(zerofile):
-                    zezroim,zerohead = fits.getdata(zerofile,0,header=True)
-                else:
-                    raise ValueError('Library '+zerofile+' file NOT FOUND')                   
-            # Image input
-            else:
-                zeroim = zero
-            # Check sizes
-            if zeroim.shape != fim.shape:
-                raise ValueError('ZERO shape and image shape do not match')                
-            # Do the correction
-            fim[mask==0] -= zeroim[mask==0]
-            fhead['ZEROCOR'] = time.ctime()+' mean %6.2f, stdev %6.2f' % (np.mean(zeroim),np.std(zeroim))
-            if verbose:
-                print(time.ctime()+' Zero: mean %6.2f, stdev %6.2f' % (np.mean(zeroim),np.std(zeroim)))
-        # Corrected already
-        else:
-            print('Already ZERO subtracted')
-            
-    # Calculate error array
-    #------------------------
-    gain = head.get('gain')
-    if gain is None:
-        gain = 1.0
-    rdnoise = head.get('rdnoise')
-    if rdnoise is None:
-        rdnoise = 0.0
-    # Add Poisson noise and readnoise in quadrature
-    error[mask==0] = np.sqrt(np.maximum(fim[mask==0]/gain,0)+rdnoise**2)
-    
-    # Subtract master dark scaled to this exposure time
-    #--------------------------------------------------
-    if (dark is not None):
-        # Not corrected yet
-        if head.get('DARKCOR') is None:
-            # Filename input
-            if type(dark) is str:
-                if os.path.exists(dark):
-                    darkim,darkhead = fits.getdata(dark,0,header=True)
-                else:
-                    raise ValueError(dark+' NOT FOUND')
-            # Use calibration library file
-            elif dark is True:
-                darkind, = np.where((cals['type']=='dark') & (cals['master']==True))
-                if len(darkind)==0:
-                    raise ValueError('No library master Dark found for this image')                
-                darkfile = cals['file'][darkind[0]]
-                if os.path.exists(darkfile):
-                    darkim,darkhead = fits.getdata(darkfile,0,header=True)
-                else:
-                    raise ValueError('Library '+darkfile+' file NOT FOUND')                   
-            # Image input
-            else:
-                darkim = dark
-            # Check sizes
-            if darkim.shape != fim.shape:
-                raise ValueError('DARK shape and image shape do not match')                       
-            # Do the correction
-            fim[mask==0] -= darkim[mask==0]*head['exptime']
-            fhead['DARKCOR'] = time.ctime()+' mean %6.2f, stdev %6.2f' % \
-                               (np.mean(darkim*head['exptime']),np.std(darkim*head['exptime']))
-            if verbose:
-                print(time.ctime()+' Dark: mean %6.2f, stdev %6.2f' % \
-                      (np.mean(darkim*head['exptime']),np.std(darkim*head['exptime'])))
-        # Corrected already
-        else:
-            print('Already DARK corrected')
-            
-    # Flat field
+        
+    # Image loop
     #-----------
-    if (flat is not None):
-        # Not corrected yet
-        if head.get('FLATCOR') is None:
-            # Filename input
-            if type(flat) is str:
-                if os.path.exists(flat):
-                    flatim,flathead = fits.getdata(flat,0,header=True)
-                else:
-                    raise ValueError(flat+' NOT FOUND')
-            # Use calibration library file
-            elif flat is True:
-                flatind, = np.where((cals['type']=='flat') & (cals['master']==True)
-                                    & (cals['filter']==head['filter']))
-                if len(flatind)==0:
-                    raise ValueError('No library master Flat found for this image')
-                flatfile = cals['file'][flatind[0]]
-                if os.path.exists(flatfile):
-                    flatim,flathead = fits.getdata(flatfile,0,header=True)
-                else:
-                    raise ValueError('Library '+flatfile+' file NOT FOUND')                   
-            # Image input
-            else:
-                flatim = flat
-            # Check sizes
-            if flatim.shape != fim.shape:
-                raise ValueError('FLAT shape and image shape do not match') 
-            # Do the correction
-            fim[mask==0] /= flatim[mask==0]
-            error[mask==0] /= flatim[mask==0]  # need to divide error as well
-            fhead['FLATCOR'] = time.ctime()+' mean %6.2f, stdev %6.2f' % (np.mean(flatim),np.std(flatim))
-            if verbose:
-                print(time.ctime()+' Flat: mean %6.2f, stdev %6.2f' % (np.mean(flatim),np.std(flatim)))
-        # Already corrected
+    for i in range(nfiles):
+        # Data input
+        if len(files)==1 and files[0]=='':
+            if head is None:
+                raise ValueError('Header not input')
+        # Load the data            
         else:
-            print('Already FLAT corrected')
-
-    # Fix pix
-    #--------
-    # interpolate over bad pixels
-    if fix:
-        fim,mask,fhead = fixpix(fim,mask,fhead,verbose=verbose)
-            
-    fhead['CCDPROC'] = time.ctime()+' CCD processing done'
-    if verbose:
-        print(time.ctime()+' CCD processing done')
-
-    # Write to output file
-    if outfile is not None:
-        if os.path.exists(outfile):
-            if clobber is False:
-                raise ValueError(outfile+' already exists and clobber=False')
+            if verbose:
+                print('Loading '+files[0])
+            if os.path.exists(files[i]):
+                im,head = fits.getdata(files[i],0,header=True)
             else:
-                os.remove(outfile)
-        print('Writing processed file to '+outfile)
-        hdulist = fits.HDUList()
-        hdu = fits.PrimaryHDU(fim,fhead).writeto(outfile)
-        hdulist.append(hdu)
-        # Add error image
-        hdulist.append(fits.ImageHDU(error))
-        hdulist[1].header['BUNIT'] = 'error'
-        # Add mask image
-        hdulist.append(fits.ImageHDU(mask))
-        hdulist[2].header['BUNIT'] = 'mask'
-        hdulist[2].header['HISTORY'] = ' Mask values'
-        hdulist[2].header['HISTORY'] = ' 0: good'        
-        hdulist[2].header['HISTORY'] = ' 1: bad pixel'
-        hdulist[2].header['HISTORY'] = ' 2: saturated'
-        hdulist[2].header['HISTORY'] = ' 4: interpolated'
-        hdulist.writeto(outfile,overwrite=clobber)
-        hdulist.close()
-        # Gzip compress
-        if compress:
-            out = subprocess.run(['gzip',outfile])
+                raise ValueError(files[i]+' NOT FOUND')            
+        
+        # Fix header, if necessary
+        if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
+            head = fixheader(head)
+            
+        # Overscan subtract and trim
+        #---------------------------
+        if head.get('OVERSCAN') is None:
+            fim,fhead = overscan(im,head,verbose=verbose)
+        else:
+            print('Already OVERSCAN corrected')
+            fim = im.copy()
+            fhead = head.copy()
+
+        # Initialize error and mask image
+        error = np.zeros(fim.shape,float)
+        mask = np.zeros(fim.shape,np.uint8) # uint8, can handle values up to 255
+
+        # Bad pixel mask
+        #---------------
+        if (bpm is not None):
+            # Not corrected yet
+            if head.get('BPMCOR') is None:            
+                # Check sizes
+                if bpmim.shape != fim.shape:
+                    raise ValueError('BPM shape and image shape do not match')
+                # Do the correction
+                nbadbpm = np.sum(bpm>0)
+                if nbadbpm>0:
+                    fim[bpm>0] = 0.0
+                    mask[bpm>0] = 1
+                    error[bpm>0] = 1e30
+                fhead['BPMCOR'] = time.ctime()+' BPM: masked '+str(nbadbpm)+' bad pixels'
+                if verbose:
+                    print(fhead['BPMCOR'])
+            # Corrected already
+            else:
+                print('Already ZERO subtracted')
+            
+        # Set mask and error for saturated pixels
+        #----------------------------------------
+        saturation = head.get('saturate')
+        if saturation is None:
+            saturation = 64000
+            sat = (fim>saturation) & (mask==0)
+            mask[sat] = 2
+            error[sat] = 1e30
+    
+        # Subtract master bias
+        #---------------------
+        if (zero is not None):
+            # Not corrected yet
+            if head.get('ZEROCOR') is None:
+                # Check sizes
+                if zeroim.shape != fim.shape:
+                    raise ValueError('ZERO shape and image shape do not match')                
+                # Do the correction
+                fim[mask==0] -= zeroim[mask==0]
+                fhead['ZEROCOR'] = time.ctime()+' ZERO: mean %6.2f, stdev %6.2f' % (np.mean(zeroim[mask==0]),np.std(zeroim[mask==0]))
+                if verbose:
+                    print(fhead['ZEROCOR'])
+            # Corrected already
+            else:
+                print('Already ZERO subtracted')
+            
+        # Calculate error array
+        #------------------------
+        gain = head.get('gain')
+        if gain is None:
+            gain = 1.0
+        rdnoise = head.get('rdnoise')
+        if rdnoise is None:
+            rdnoise = 0.0
+        # Add Poisson noise and readnoise in quadrature
+        error[mask==0] = np.sqrt(np.maximum(fim[mask==0]/gain,0)+rdnoise**2)
+    
+        # Subtract master dark scaled to this exposure time
+        #--------------------------------------------------
+        if (dark is not None):
+            # Not corrected yet
+            if head.get('DARKCOR') is None:   
+                # Check sizes
+                if darkim.shape != fim.shape:
+                    raise ValueError('DARK shape and image shape do not match')                       
+                # Do the correction
+                fim[mask==0] -= darkim[mask==0]*head['exptime']
+                fhead['DARKCOR'] = time.ctime()+' DARK: mean %6.2f, stdev %6.2f' % \
+                                   (np.mean(darkim[mask==0]*head['exptime']),np.std(darkim[mask==0]*head['exptime']))
+                if verbose:
+                    print(fhead['DARKCOR'])
+            # Corrected already
+            else:
+                print('Already DARK corrected')
+            
+        # Flat field
+        #-----------
+        if (flat is not None):
+            # Not corrected yet
+            if head.get('FLATCOR') is None:
+                # Filename input
+                if type(flat) is str:
+                    if os.path.exists(flat):
+                        flatim,flathead = fits.getdata(flat,0,header=True)
+                    else:
+                        raise ValueError(flat+' NOT FOUND')
+                # Use calibration library file
+                elif flat is True:
+                    flatind, = np.where((cals['type']=='flat') & (cals['master']==True)
+                                        & (cals['filter']==head['filter']))
+                    if len(flatind)==0:
+                        raise ValueError('No library master Flat found for this image')
+                    flatfile = cals['file'][flatind[0]]
+                    if os.path.exists(flatfile):
+                        flatim,flathead = fits.getdata(flatfile,0,header=True)
+                    else:
+                        raise ValueError('Library '+flatfile+' file NOT FOUND')                   
+                # Image input
+                else:
+                    flatim = flat
+                # Check sizes
+                if flatim.shape != fim.shape:
+                    raise ValueError('FLAT shape and image shape do not match') 
+                # Do the correction
+                fim[mask==0] /= flatim[mask==0]
+                error[mask==0] /= flatim[mask==0]  # need to divide error as well
+                fhead['FLATCOR'] = time.ctime()+' FLAT: mean %6.2f, stdev %6.2f' % (np.mean(flatim[mask==0]),np.std(flatim[mask==0]))
+                if verbose:
+                    print(fhead['FLATCOR'])
+            # Already corrected
+            else:
+                print('Already FLAT corrected')
+                
+        # Fix pix
+        #--------
+        # interpolate over bad pixels
+        if fix:
+            fim,mask,fhead = fixpix(fim,mask,fhead,verbose=verbose)
+            
+        fhead['CCDPROC'] = time.ctime()+' CCD processing done'
+        if verbose:
+            print(time.ctime()+' CCD processing done')
+
+        # Convert images
+        fim = fim.astype(np.float32)     # to 32 bit
+        error = error.astype(np.float32) # to 32 bit
+        
+        # Write to output file
+        if outfile is not None:
+            if os.path.exists(outfile):
+                if clobber is False:
+                    raise ValueError(outfile+' already exists and clobber=False')
+                else:
+                    os.remove(outfile)
+            print('Writing processed file to '+outfile)
+            hdulist = fits.HDUList()
+            hdu = fits.PrimaryHDU(fim,fhead)
+            hdulist.append(hdu)
+            # Add error image
+            hdulist.append(fits.ImageHDU(error))
+            hdulist[1].header['BUNIT'] = 'error'
+            # Add mask image
+            hdulist.append(fits.ImageHDU(mask))
+            hdulist[2].header['BUNIT'] = 'mask'
+            hdulist[2].header['HISTORY'] = ' Mask values'
+            hdulist[2].header['HISTORY'] = ' 0: good'        
+            hdulist[2].header['HISTORY'] = ' 1: bad pixel'
+            hdulist[2].header['HISTORY'] = ' 2: saturated'
+            hdulist[2].header['HISTORY'] = ' 4: interpolated'
+            hdulist.writeto(outfile,overwrite=clobber)
+            hdulist.close()
+            # Gzip compress
+            if compress:
+                if verbose:
+                    print('Gzip compressing')
+                if os.path.exists(outfile+'.gz') and clobber:
+                    os.remove(outfile+'.gz')
+                    out = subprocess.run(['gzip',outfile])
+                else:
+                    print(outfile+'.gz already exists and clobber=False')
         
     return fim, fhead
 
