@@ -10,6 +10,7 @@ from glob import glob
 import time
 import re
 import subprocess
+from astropy.modeling.models import Gaussian2D
 #import matplotlib
 #matplotlib.use('nbagg')
 
@@ -25,7 +26,8 @@ def ccdlist(input=None):
     files = glob(input)
     nfiles = len(files)
     dt = np.dtype([('file',np.str,100),('object',np.str,100),('naxis1',int),('naxis2',int),
-                      ('imagetyp',np.str,100),('exptime',float),('filter',np.str,100)])
+                   ('imagetyp',np.str,100),('exptime',float),('filter',np.str,100),
+                   ('dateobs',np.str,50),('jd',float)])
     cat = np.zeros(nfiles,dtype=dt)
     for i,f in enumerate(files):
         base = os.path.basename(f)
@@ -38,37 +40,71 @@ def ccdlist(input=None):
         cat['imagetyp'][i] = h.get('imagetyp')
         cat['exptime'][i] = h.get('exptime')
         cat['filter'][i] = h.get('filter')
+        cat['dateobs'][i] = h.get('date-obs')
+        cat['jd'][i] = h.get('jd')        
         print(base+'  '+str(cat['naxis1'][i])+'  '+str(cat['naxis2'][i])+'  '+cat['imagetyp'][i]+'  '+str(cat['exptime'][i])+'  '+cat['filter'][i])
     return cat
 
 def library():
     """ Get calibration library file info."""
     ddir = datadir()
-    files = glob(ddir+'*.fit')
+    files = []
+    for p in ['*.fit','*.fit.gz','*.fits','*.fits.gz']:
+        files += glob(ddir+p)
     nfiles = len(files)
     if nfiles==0:
         return None
-    cat = np.zeros(nfiles,dtype=np.dtype([('name',np.str,100),('type',np.str,50),()]))
+    cat = np.zeros(nfiles,dtype=np.dtype([('file',np.str,200),('name',np.str,100),('naxis1',int),
+                                          ('naxis2',int),('imagetyp',np.str,50),
+                                          ('type',np.str,50),('filter',np.str,40),('dateobs',np.str,30),
+                                          ('jd',float),('master',bool)]))
     for i in range(nfiles):
         head = fits.getheader(files[i])
-        cat['name'][i] = files[i]
-        cat['type'][i] = head['exptype']
+        cat['file'][i] = files[i]
+        cat['name'][i] = os.path.basename(files[i])
+        cat['naxis1'][i] = head.get('naxis1')
+        cat['naxis2'][i] = head.get('naxis2')        
+        imagetyp = head.get('imagetyp')
+        cat['imagetyp'][i] = imagetyp
+        for t in ['bias','dark','flat','light']:
+            if t in imagetyp.lower():
+                cat['type'][i] = t
+        if 'bpm' in cat['name'][i]:
+            cat['type'][i] = 'bpm'
+        cat['filter'][i] = head.get('filter')    
+        cat['dateobs'][i] = head.get('date-obs')
+        cat['jd'][i] = head.get('jd')
+        if 'master' in cat['name'][i]:
+            cat['master'][i] = True
+        else:
+            cat['master'][i] = False
     return cat
 
 def fixheader(head):
     """ Update the headers."""
     head2 = head.copy()
-    head2['BIASSEC1'] = '[1:41,1:2728]'
-    head2['BIASSEC2'] = '[3430:3465,1:2728]'
-    head2['TRIMSEC'] = '[42:3429,15:2726]'
-    head2['DATASEC'] = '[42:3429,15:2726]'
+    nx = head['NAXIS1']
+    ny = head['NAXIS2']
+    # With overscan: [3468,2728]
+    if (nx==3468) and (ny==2728):
+        head2['BIASSEC1'] = '[1:41,1:2728]'
+        head2['BIASSEC2'] = '[3430:3465,1:2728]'
+        head2['TRIMSEC'] = '[42:3429,15:2726]'
+        head2['DATASEC'] = '[42:3429,15:2726]'
+    # Without overscan: [3380,2704]        
+    elif (nx==3380) and (ny==2704):
+        head2['BIASSEC'] = '[1:3380,1:2]'
+        head2['TRIMSEC'] = '[1:3380,3:2704]'
+        head2['DATASEC'] = '[1:3380,3:2704]'
+    else:
+        raise ValueError('Image size not understood')
     head2['RDNOISE'] = (4.5, 'readnoise in e-')
     head2['GAIN'] = (0.15759900212287903, 'Electronic gain in e-/ADU')
     head2['BUNIT'] = 'ADU'
     return head2
 
     
-def overscan(im,head):
+def overscan(im,head,verbose=False):
     """ This calculate the overscan and subtracts it from the data and then trims off the overscan region"""
     # y = [0:40] and [3429:3464]
     # x = [0:13] and [2726:2727]
@@ -141,10 +177,70 @@ def overscan(im,head):
     if biassec2 is not None:
         head2['OVERSCAN'] = time.ctime()+' Overscan is '+biassec+' and '+biassec2+', mean '+str(np.mean(oim))
     else:
-        head2['OVERSCAN'] = time.ctime()+' Overscan is '+biassec+', mean '+str(np.mean(oim))    
+        head2['OVERSCAN'] = time.ctime()+' Overscan is '+biassec+', mean '+str(np.mean(oim))
+    if verbose:
+        print(head2['OVERSCAN'])
+        print(time.ctime()+' Trimming to '+trimsec)
     return out, head2
+
+def fixpixconv(im,mask,yind,xind,filt):
+    np,np = filt.shape
+    nh = np//2
+    # image indices
+    ylo = np.maximum(yind-nh,0)
+    yhi = np.minimum(yind+nh+1,ny)
+    xlo = np.maximum(xind-nh,0)
+    xhi = np.minimum(xind+nh+1,nx)
+    slc = (slice(ylo,yhi,None),slice(xlo,xhi,None))
+    # filter indices
+    fylo = np.maximum(yind-nh,0)-yind+nh
+    fyhi = np.minimum(yind+nh+1,ny)-yind+nh
+    fxlo = np.maximum(xind-nh,0)-xind+nh
+    fxhi = np.minimum(xind+nh+1,nx)-xind+nh
+    fslc = (slice(fylo,fyhi,None),slice(fxlo,fxhi,None))
+    ngd = np.sum(mask[slc])
+    if ngd==0:
+        return None
+    totf = np.sum(filt[fslc])
+    new = np.sum(im[slc]*(mask[slc]==0)*filt[fslc])/totf
+    return new
     
-def masterbias(files,outfile=None,clobber=True):
+def fixpix(im,mask,head,verbose=False):
+    """ Interpolate over bad pixels."""
+    ny,nx = im.shape
+    
+    ind, = np.where(mask>0)
+    nind = len(ind)
+    ind2 = np.unravel_index(ind,fim.shape)
+    # Make filters
+    xx,yy = np.meshgrid(np.arange(3),np.arange(3))
+    filt3 = np.exp(-0.5*((xx-1)**2+(yy-1)**2)/1.0**2)
+    xx,yy = np.meshgrid(np.arange(7),np.arange(7))
+    filt7 = np.exp(-0.5*((xx-3)**2+(yy-3)**2)/1.0**2)
+    xx,yy = np.meshgrid(np.arange(11),np.arange(11))
+    filt11 = np.exp(-0.5*((xx-5)**2+(yy-5)**2)/1.0**2)
+    # Loop over pixels
+    nfix = 0
+    for i in range(nind):
+        yind,xind = ind2[i]
+        # convolve with filter
+        new = fixpixconv(im,mask,yind,xind,filt3)
+        if new is None:
+            new = fixpixconv(im,mask,yind,xind,filt7)
+        if new is None:
+            new = fixpixconv(im,mask,yind,xind,filt11)
+        if new is not None:
+            im[yind,xind] = new
+            mask[yind,xind] += 4
+            nfix += 1
+            
+    head['FIXPIX'] = time.ctime()+' FIXPIX: '+str(nfix)+' pixels interpolated over'
+    if verbose:
+        print(head['FIXPIX'])
+    
+    return im,mask,head
+
+def masterbias(files,med=False,outfile=None,clobber=True,verbose=False):
     """
     Load the bias images.  Overscan correct and trim them.  Then average them.
 
@@ -152,10 +248,14 @@ def masterbias(files,outfile=None,clobber=True):
     ----------
     files : list
         List of bias FITS files.
+    med : boolean, optional
+        Use the median of all the files.  By default med=False and the mean is calculated.
     outfile : string, optional
         Filename to write the master bias image to.
-    clobber : bool, optional
-        If the output file already exists, then overwrite it.
+    clobber : boolean, optional
+        If the output file already exists, then overwrite it.  Default is True.
+    verbose : boolean, optional
+        Verbose output to the screen.  Default is False.
 
     Returns
     -------
@@ -172,19 +272,45 @@ def masterbias(files,outfile=None,clobber=True):
     """
 
     nfiles = len(files)
-    head0 = fits.headfits(files[0])
-    nx = head['NAXIS1']
-    ny = head['NAXIS2']    
-    imarr = np.zeros((ny, nx, nfiles),float)
+    if verbose:
+        print('Creating master bias using '+str(nfiles)+' files')
+    # File loop    
     for i in range(nfiles):
-        print(str(i+1)+' '+files[i])
         im,head = fits.getdata(files[i],0,header=True)
+        sh = im.shape
+        if verbose:
+            print(str(i+1)+' '+files[i]+' ['+str(sh[1])+','+str(sh[0])+']')        
+        # Fix header, if necessary
+        if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
+            head = fixheader(head)
+        # Check image type
+        imagetyp = head['IMAGETYP']
+        if 'bias' not in imagetyp.lower() and 'zero' not in imagetyp.lower():
+            raise ValueError(files[i]+' is not a bias')
+        # Image processing, overscan+trim
         im2,head2 = ccdproc(im,head)
-        imarr[:,:,i] = im2
+        # Initialize array
+        if i==0:
+            ny,nx = im2.shape
+            if med:
+                imarr = np.zeros((ny, nx, nfiles),float)
+            else:
+                totim = np.zeros(im2.shape,float)
+        if med:
+            imarr[:,:,i] = im2
+        else:
+            totim += im2
         if i==0: ahead=head2.copy()
         ahead['CMB'+str(i+1)] = files[i]
-    aim = np.mean(imarr,axis=2)
+    # Final calculation
+    if med:
+        aim = np.median(imarr,axis=2)
+        ahead['HISTORY'] = 'Median combine'
+    else:
+        aim = totim/nfiles
+        ahead['HISTORY'] = 'Mean combine'
     ahead['NCOMBINE'] = nfiles
+    ahead['HISTORY'] = time.ctime()+' bias combine'    
     # Output file
     if outfile is not None:
         if os.path.exists(outfile):
@@ -192,13 +318,14 @@ def masterbias(files,outfile=None,clobber=True):
                 raise ValueError(outfile+' already exists and clobber=False')
             else:
                 os.remove(outfile)
-        print('Writing master bias to '+outfile)
+        if verbose:
+            print('Writing master bias to '+outfile)
         hdu = fits.PrimaryHDU(aim,ahead).writeto(outfile)
     
     return aim, ahead
 
 
-def masterdark(files,zero,outfile=None,clobber=True):
+def masterdark(files,zero,med=False,outfile=None,clobber=True,verbose=False):
     """
     Load the dark images.  Overscan correct and trim them.  zero subtract.  Then average them.
 
@@ -206,10 +333,16 @@ def masterdark(files,zero,outfile=None,clobber=True):
     ----------
     files : list
         List of dark FITS files.
+    zero : numpy image or str
+        Master bias.  This can be the image or the filename.
+    med : boolean, optional
+        Use the median of all the files.  By default med=False and the mean is calculated.
     outfile : string, optional
         Filename to write the master dark image to.
-    clobber : bool, optional
-        If the output file already exists, then overwrite it.
+    clobber : boolean, optional
+        If the output file already exists, then overwrite it.  Default is True.
+    verbose : boolean, optional
+        Verbose output to the screen.  Default is False.
 
     Returns
     -------
@@ -221,24 +354,58 @@ def masterdark(files,zero,outfile=None,clobber=True):
     Example
     -------
 
-    dark, dhead = masterdark(dark_files)
+    dark, dhead = masterdark(dark_files,zero)
 
     """
 
     nfiles = len(files)
-    imarr = np.zeros((2712, 3388, nfiles),float)
+    if verbose:
+        print('Creating master dark using '+str(nfiles)+' files')
+
+    # Load master bias if filename input
+    if type(zero) is str:
+        zerofile = zero
+        zero,zhead = fits.getdata(zerofile,header=True)
+        
+    # File loop        
     for i in range(nfiles):
-        print(str(i+1)+' '+files[i])
         im,head = fits.getdata(files[i],0,header=True)
-        im2,head2 = ccdproc(im,head,zero)
-        imarr[:,:,i] = im2 / np.median(im2)
+        sh = im.shape
+        if verbose:
+            print(str(i+1)+' '+files[i]+' ['+str(sh[1])+','+str(sh[0])+'] '+str(head['exptime'])+' sec')
+        # Fix header, if necessary
+        if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
+            head = fixheader(head)        
+        # Check image type
+        imagetyp = head['IMAGETYP']
+        if 'dark' not in imagetyp.lower():
+            raise ValueError(files[i]+' is not a dark')
+        # Image processing, overscan+trim+zercorr        
+        im2,head2 = ccdproc(im,head,zero=zero)
+        # Initialize array
+        if i==0:
+            ny,nx = im2.shape
+            if med:
+                imarr = np.zeros((ny,nx, nfiles),float)
+            else:
+                totim = np.zeros(im2.shape,float)
+        if med:
+            imarr[:,:,i] = im2 / head['exptime']  # divide by exposure time
+        else:
+            totim += im2 / head['exptime']
         if i==0: ahead=head2.copy()
         ahead['CMB'+str(i+1)] = files[i]
-    # Take average
-    aim = np.mean(imarr,axis=2)
-    # Divide by exposure time
-    aim /= head['exptime']
+    # Final calculation
+    if med:
+        aim = np.median(imarr,axis=2)
+        ahead['HISTORY'] = 'Median combine'        
+    else:
+        aim = totim/nfiles
+        ahead['HISTORY'] = 'Mean combine'
+    # Make sure they are all non-negative
+    aim = np.maximum(aim,0)
     ahead['NCOMBINE'] = nfiles
+    ahead['HISTORY'] = time.ctime()+' dark combine'      
     # Output file
     if outfile is not None:
         if os.path.exists(outfile):
@@ -246,12 +413,13 @@ def masterdark(files,zero,outfile=None,clobber=True):
                 raise ValueError(outfile+' already exists and clobber=False')
             else:
                 os.remove(outfile)
-        print('Writing master dark to '+outfile)
+        if verbose:
+            print('Writing master dark to '+outfile)
         hdu = fits.PrimaryHDU(aim,ahead).writeto(outfile)
     
     return aim, ahead
 
-def masterflat(files,zero,dark,outfile=None,clobber=True):
+def masterflat(files,zero,dark,med=False,outfile=None,clobber=True,verbose=False):
     """
     Load the flat images.  Overscan correct and trim them.  Bias and dark subtract. Then divide by median and average them.
 
@@ -259,10 +427,19 @@ def masterflat(files,zero,dark,outfile=None,clobber=True):
     ----------
     files : list
         List of flat FITS files.
+    zero : numpy image or str
+        Master bias.  This can be the image or the filename.
+    dark : numpy image or str
+        Master dark.  This can be the image or the filename.
+    med : boolean, optional
+        Use the median of all the files.  By default med=False and the mean is calculated.
     outfile : string, optional
         Filename to write the master flat image to.
     clobber : bool, optional
         If the output file already exists, then overwrite it.
+        If the output file already exists, then overwrite it.  Default is True.
+    verbose : boolean, optional
+        Verbose output to the screen.  Default is False.
 
     Returns
     -------
@@ -274,22 +451,60 @@ def masterflat(files,zero,dark,outfile=None,clobber=True):
     Example
     -------
 
-    flat, fhead = masterflat(flat_files)
+    flat, fhead = masterflat(flat_files,zero,dark)
 
     """
 
     nfiles = len(files)
-    imarr = np.zeros((2712, 3388, nfiles),float)
+    if verbose:
+        print('Creating master flat using '+str(nfiles)+' files')
+
+    # Load master bias if filename input
+    if type(zero) is str:
+        zerofile = zero
+        zero,zhead = fits.getdata(zerofile,header=True)
+    # Load master dark if filename input
+    if type(dark) is str:
+        darkfile = dark
+        dark,dhead = fits.getdata(darkfile,header=True)        
+
+    # File loop
     for i in range(nfiles):
         im,head = fits.getdata(files[i],0,header=True)
-        print(str(i+1)+' '+files[i]+' '+str(head.get('FILTER')))
-        im2,head2 = ccdproc(im,head,zero,dark)
-        imarr[:,:,i] = im2 / np.median(im2)
+        sh = im.shape
+        # Fix header, if necessary
+        if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
+            head = fixheader(head)        
+        # Check image type
+        imagetyp = head['IMAGETYP']
+        if 'flat' not in imagetyp.lower():
+            raise ValueError(files[i]+' is not a flat')
+        # Image processing, overscan+trim+zercorr+darkcorr
+        im2,head2 = ccdproc(im,head,zero=zero,dark=dark)
+        if verbose:
+            print(str(i+1)+' '+files[i]+' ['+str(sh[1])+','+str(sh[0])+'] '+str(head['exptime'])+' sec  %8.2f ADU' %(np.median(im2)))
+        # Initialize array
+        if i==0:
+            ny,nx = im2.shape
+            if med:
+                imarr = np.zeros((ny,nx,nfiles),float)
+            else:
+                totim = np.zeros(im2.shape,float)
+        if med:
+            imarr[:,:,i] = im2 / np.median(im2)   # divide by median flux
+        else:
+            totim += im2 / np.median(im2)
         if i==0: ahead=head2.copy()
         ahead['CMB'+str(i+1)] = files[i]
-    aim = np.mean(imarr,axis=2)
+    # Final calculation
+    if med:
+        aim = np.median(imarr,axis=2)
+        ahead['HISTORY'] = 'Median combine'              
+    else:
+        aim = totim / nfiles
+        ahead['HISTORY'] = 'Mean combine'
     ahead['NCOMBINE'] = nfiles
-
+    ahead['HISTORY'] = time.ctime()+' flat combine'          
     # Output file
     if outfile is not None:
         if os.path.exists(outfile):
@@ -297,13 +512,104 @@ def masterflat(files,zero,dark,outfile=None,clobber=True):
                 raise ValueError(outfile+' already exists and clobber=False')
             else:
                 os.remove(outfile)
-        print('Writing master flat to '+outfile)
+        if verbose:
+            print('Writing master flat to '+outfile)
         hdu = fits.PrimaryHDU(aim,ahead).writeto(outfile)
 
     return aim, ahead
 
+def makebpm(zero,dark=None,flat=None,maxzero=100,maxdark=1,maxflat=1.2,
+            outfile=None,verbose=False,clobber=True,compress=False):
+    """
+    Create bad pixel mask from master bias, dark and flat.
+
+    Parameters
+    ----------
+    zero : filename or numpy 2D array, optional
+        The master bias.  Either the 2D image or the filename.
+    dark : filename or numpy 2D array, optional
+        The master dark.  Either the 2D image or the filename.
+    flat : filename or numpy 2D array, optional
+        The master flat.  Either the 2D image or the filename.
+    maxzero : int, optional
+        The cutoff to use for the bias image.  Values above that will
+          be considered bad.  Default is 100.
+    maxdark : int, optional
+        The cutoff to use for the dark image.  Values above that will
+          be considered bad.  Default is 1.0
+    maxflat : int, optional
+        The cutoff to use for the flat image.  Values above that will
+          be considered bad.  Default is 1.2
+    outfile : string, optional
+        Filename to write the processed image to.
+    verbose : boolean, optional
+        Verbose output to the screen.
+    clobber : boolean, optional
+        If the output file already exists, then overwrite it.
+    compress : boolean, optional
+        Gzip compress output file.  Default is False.
+
+    Returns
+    -------
+    bpm : numpy image
+        The 2D processed image.
+    fhead : header dictionary
+        The header for the processed image.
+
+    Example
+    -------
+
+    bpm, head = makebpm(zero,dark,flat)
+
+    """  
+
+    # Load master bias if filename input
+    if type(zero) is str:
+        zerofile = zero
+        zero,zhead = fits.getdata(zerofile,header=True)
+    # Load master dark if filename input
+    if type(dark) is str:
+        darkfile = dark
+        dark,dhead = fits.getdata(darkfile,header=True)
+    # Load master flat if filename input
+    if type(flat) is str:
+        flatfile = flat
+        flat,fhead = fits.getdata(flatfile,header=True)                
+
+    bhead = zhead.copy()
+
+    # Initialize array
+    ny,nx = zero.shape
+    bpm = np.zeros((ny,nx),int)
+    
+    # Check zero
+    bpm[zero>maxzero] = 1
+    # Check dark
+    if dark is not None:
+        bpm[dark>maxdark] = 1
+    # Check flat
+    if flat is not None:
+        bpm[flat>maxflat] = 1     
+
+    nbad = np.sum(bpm)
+    bhead['HISTORY'] = str(nbad)+' pixels marked as bad'
+    bhead['HISTORY'] = time.ctime()+' BPM creation'
+    # Output file
+    if outfile is not None:
+        if os.path.exists(outfile):
+            if clobber is False:
+                raise ValueError(outfile+' already exists and clobber=False')
+            else:
+                os.remove(outfile)
+        if verbose:
+            print('Writing bpm to '+outfile)
+        hdu = fits.PrimaryHDU(bpm,bhead).writeto(outfile)
+    
+    return bpm, bhead
+    
+
 def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,verbose=False,
-            clobber=True,compress=False):
+            clobber=True,compress=False,fix=False):
     """
     Overscan subtract, trim, subtract master zero, subtract master dark, flat field.
 
@@ -313,14 +619,20 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
         This can either be a list of image filenames or a 2D image.
     head : header dictionary, optional
         The header if a single image is input.
-    bpm : filename or numpy 2D array, optional
-        The master bad pixel mask.  Either the 2D image or the filename.
-    zero : filename or numpy 2D array, optional
-        The master bias.  Either the 2D image or the filename.
-    dark : filename or numpy 2D array, optional
-        The master dark.  Either the 2D image or the filename.
-    flat : filename or numpy 2D array, optional
-        The master flat.  Either the 2D image or the filename.
+    bpm : filename, numpy 2D array, or boolean, optional
+        The bad pixel mask.  Either the 2D image, the filename, or
+          a boolean.  If bpm=True, then a library BPM will be used.
+    zero : filename, numpy 2D array, or boolean, optional
+        The master bias.  Either the 2D image, the filename, or
+          a boolean.  If zero=True, then a library zero will be used. 
+    dark : filename, numpy 2D array, or boolean, optional
+        The master dark.  Either the 2D image, the filename, or
+          a boolean.  If dark=True, then a library dark will be used. 
+    flat : filename, numpy 2D array, or boolean, optional
+        The master flat.  Either the 2D image, the filename, or
+          a boolean.  If flat=True, then a library flat will be used. 
+    fix : boolean, optional
+        Interpolate over bad pixels.  Default is False.
     outfile : string, optional
         Filename to write the processed image to.
     verbose : boolean, optional
@@ -358,6 +670,8 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
         if head is None:
             raise ValueError('Header not input')
 
+    # Get calibray library information
+    cals = library()
 
         
     # Fix header, if necessary
@@ -367,7 +681,7 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
     # Overscan subtract and trim
     #---------------------------
     if head.get('OVERSCAN') is None:
-        fim,fhead = overscan(im,head)
+        fim,fhead = overscan(im,head,verbose=verbose)
     else:
         print('Already OVERSCAN corrected')
         fim = im.copy()
@@ -388,9 +702,22 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
                     bpmim,bpmhead = fits.getdata(bpm,0,header=True)
                 else:
                     raise ValueError(bpm+' NOT FOUND')
+            # Use calibration library file
+            elif bpm is True:
+                bpmind, = np.where(cals['type']=='bpm')
+                if len(bpmind)==0:
+                    raise ValueError('No library BPM found for this image')                
+                bpmfile = cals['file'][bpmind[0]]
+                if os.path.exists(bpmfile):
+                    bpmim,bpmhead = fits.getdata(bpmfile,0,header=True)
+                else:
+                    raise ValueError('Library '+bpmfile+' file NOT FOUND')                    
             # Image input
             else:
                 bpmim = bpm
+            # Check sizes
+            if bpmim.shape != fim.shape:
+                raise ValueError('BPM shape and image shape do not match')
             # Do the correction
             nbadbpm = np.sum(bpm>0)
             if nbadbpm>0:
@@ -398,6 +725,8 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
                 mask[bpm>0] = 1
                 error[bpm>0] = 1e30
             fhead['BPMCOR'] = time.ctime()+' masked '+str(nbadbpm)+' bad pixels'
+            if verbose:
+                print(time.ctime()+' masked '+str(nbadbpm)+' bad pixels')
         # Corrected already
         else:
             print('Already ZERO subtracted')
@@ -422,16 +751,31 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
                     zeroim,zerohead = fits.getdata(zero,0,header=True)
                 else:
                     raise ValueError(zero+' NOT FOUND')
+            # Use calibration library file
+            elif zero is True:
+                zeroind, = np.where((cals['type']=='bias') & (cals['master']==True))
+                if len(zeroind)==0:
+                    raise ValueError('No library master Zero found for this image')                
+                zerofile = cals['file'][zeroind[0]]
+                if os.path.exists(zerofile):
+                    zezroim,zerohead = fits.getdata(zerofile,0,header=True)
+                else:
+                    raise ValueError('Library '+zerofile+' file NOT FOUND')                   
             # Image input
             else:
                 zeroim = zero
+            # Check sizes
+            if zeroim.shape != fim.shape:
+                raise ValueError('ZERO shape and image shape do not match')                
             # Do the correction
             fim[mask==0] -= zeroim[mask==0]
             fhead['ZEROCOR'] = time.ctime()+' mean %6.2f, stdev %6.2f' % (np.mean(zeroim),np.std(zeroim))
+            if verbose:
+                print(time.ctime()+' Zero: mean %6.2f, stdev %6.2f' % (np.mean(zeroim),np.std(zeroim)))
         # Corrected already
         else:
             print('Already ZERO subtracted')
-
+            
     # Calculate error array
     #------------------------
     gain = head.get('gain')
@@ -442,7 +786,7 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
         rdnoise = 0.0
     # Add Poisson noise and readnoise in quadrature
     error[mask==0] = np.sqrt(np.maximum(fim[mask==0]/gain,0)+rdnoise**2)
-            
+    
     # Subtract master dark scaled to this exposure time
     #--------------------------------------------------
     if (dark is not None):
@@ -454,13 +798,29 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
                     darkim,darkhead = fits.getdata(dark,0,header=True)
                 else:
                     raise ValueError(dark+' NOT FOUND')
+            # Use calibration library file
+            elif dark is True:
+                darkind, = np.where((cals['type']=='dark') & (cals['master']==True))
+                if len(darkind)==0:
+                    raise ValueError('No library master Dark found for this image')                
+                darkfile = cals['file'][darkind[0]]
+                if os.path.exists(darkfile):
+                    darkim,darkhead = fits.getdata(darkfile,0,header=True)
+                else:
+                    raise ValueError('Library '+darkfile+' file NOT FOUND')                   
             # Image input
             else:
                 darkim = dark
+            # Check sizes
+            if darkim.shape != fim.shape:
+                raise ValueError('DARK shape and image shape do not match')                       
             # Do the correction
             fim[mask==0] -= darkim[mask==0]*head['exptime']
             fhead['DARKCOR'] = time.ctime()+' mean %6.2f, stdev %6.2f' % \
-                               (np.mean(darkim*head['exptime']),np.std(darkim*head['exptime']))        
+                               (np.mean(darkim*head['exptime']),np.std(darkim*head['exptime']))
+            if verbose:
+                print(time.ctime()+' Dark: mean %6.2f, stdev %6.2f' % \
+                      (np.mean(darkim*head['exptime']),np.std(darkim*head['exptime'])))
         # Corrected already
         else:
             print('Already DARK corrected')
@@ -476,18 +836,42 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
                     flatim,flathead = fits.getdata(flat,0,header=True)
                 else:
                     raise ValueError(flat+' NOT FOUND')
+            # Use calibration library file
+            elif flat is True:
+                flatind, = np.where((cals['type']=='flat') & (cals['master']==True)
+                                    & (cals['filter']==head['filter']))
+                if len(flatind)==0:
+                    raise ValueError('No library master Flat found for this image')
+                flatfile = cals['file'][flatind[0]]
+                if os.path.exists(flatfile):
+                    flatim,flathead = fits.getdata(flatfile,0,header=True)
+                else:
+                    raise ValueError('Library '+flatfile+' file NOT FOUND')                   
             # Image input
             else:
                 flatim = flat
+            # Check sizes
+            if flatim.shape != fim.shape:
+                raise ValueError('FLAT shape and image shape do not match') 
             # Do the correction
             fim[mask==0] /= flatim[mask==0]
             error[mask==0] /= flatim[mask==0]  # need to divide error as well
             fhead['FLATCOR'] = time.ctime()+' mean %6.2f, stdev %6.2f' % (np.mean(flatim),np.std(flatim))
+            if verbose:
+                print(time.ctime()+' Flat: mean %6.2f, stdev %6.2f' % (np.mean(flatim),np.std(flatim)))
         # Already corrected
         else:
             print('Already FLAT corrected')
 
+    # Fix pix
+    #--------
+    # interpolate over bad pixels
+    if fix:
+        fim,mask,fhead = fixpix(fim,mask,fhead,verbose=verbose)
+            
     fhead['CCDPROC'] = time.ctime()+' CCD processing done'
+    if verbose:
+        print(time.ctime()+' CCD processing done')
 
     # Write to output file
     if outfile is not None:
@@ -509,7 +893,8 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
         hdulist[2].header['HISTORY'] = ' Mask values'
         hdulist[2].header['HISTORY'] = ' 0: good'        
         hdulist[2].header['HISTORY'] = ' 1: bad pixel'
-        hdulist[2].header['HISTORY'] = ' 2: saturated'   
+        hdulist[2].header['HISTORY'] = ' 2: saturated'
+        hdulist[2].header['HISTORY'] = ' 4: interpolated'
         hdulist.writeto(outfile,overwrite=clobber)
         hdulist.close()
         # Gzip compress
