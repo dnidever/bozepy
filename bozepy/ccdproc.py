@@ -1,6 +1,13 @@
 #!/usr/bin/env python
 
-# CCDPROC code
+"""CCDPROC.PY - Generic CCD image calibration/reduction
+
+"""
+
+from __future__ import print_function
+
+__authors__ = 'David Nidever <dnidever@montana.edu>'
+__version__ = '20211021'  # yyyymmdd    
 
 import matplotlib.pyplot as plt
 from astropy.io import fits
