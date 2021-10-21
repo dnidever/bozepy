@@ -15,7 +15,7 @@ from glob import glob
 from astropy.io import fits
 import matplotlib.pyplot as plt
 import scipy.ndimage as ndimage
-from astropy.stats import sigma_clipped_stats, SgiamClip, mad_std
+from astropy.stats import sigma_clipped_stats, SigmaClip, mad_std
 from photutils import aperture_photometry, CircularAperture, CircularAnnulus
 from photutils import Background2D, MedianBackground
 from photutils import DAOStarFinder
