@@ -690,9 +690,14 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,o
             files = [l.rstrip('\n') for l in files]  # strip newlines
     elif type(data) is list:  # list of files input
         files = data
-    elif type(data) is np.ndarray:  # image input
-        files = ['']
-        im = data
+    elif type(data) is np.ndarray:  # numpy array
+        if data.ndim==1 and (data.dtype.type==np.str or data.dtype.type==np.str_):  # array of filenames
+            files = list(data)
+        elif data.ndim==2:  # 2D image
+            files = ['']
+            im = data
+        else:
+            raise ValueError('Input numpy data not understood')
     else:
         raise ValueError('Input data not understood')
     nfiles = len(files)
