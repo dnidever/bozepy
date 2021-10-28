@@ -30,7 +30,10 @@ def datadir():
 
 def ccdlist(input=None):
     if input is None: input='*.fits'
-    files = glob(input)
+    if type(input) is list:
+        files = input
+    else:
+        files = glob(input)
     nfiles = len(files)
     dt = np.dtype([('file',np.str,100),('object',np.str,100),('naxis1',int),('naxis2',int),
                    ('imagetyp',np.str,100),('exptime',float),('filter',np.str,100),
@@ -620,17 +623,18 @@ def makebpm(zero,dark=None,flat=None,maxzero=100,maxdark=1,maxflat=1.2,
     return bpm, bhead
     
 
-def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,verbose=False,
-            clobber=True,compress=False,fix=False):
+def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,outsuffix='_red',
+            verbose=False,clobber=True,compress=False,fix=False):
     """
     Overscan subtract, trim, subtract master zero, subtract master dark, flat field.
 
     Parameters
     ----------
     data : list or numpy 2D array
-        This can either be a list of image filenames or a 2D image.
+        This can either be (1) a list of image filenames, (2) a file with a list of
+            names image filenames, or (3) a 2D image (head must also be input).
     head : header dictionary, optional
-        The header if a single image is input.
+        The header if a single image is input (data).
     bpm : filename, numpy 2D array, or boolean, optional
         The bad pixel mask.  Either the 2D image, the filename, or
           a boolean.  If bpm=True, then a library BPM will be used.
@@ -645,8 +649,12 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
           a boolean.  If flat=True, then a library flat will be used. 
     fix : boolean, optional
         Interpolate over bad pixels.  Default is False.
-    outfile : string, optional
-        Filename to write the processed image to.
+    outfile : string or boolean, optional
+        Filename to write the processed image to.  If outfile=True, then
+          the output filename will be the input filename with outsuffix
+          added (i.e. image.fits -> image_red.fits).
+    outsuffix : string, optional
+        Suffix to use for output files. Default is "_red".
     verbose : boolean, optional
         Verbose output to the screen.
     clobber : boolean, optional
@@ -671,6 +679,15 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
     # Check the inputs
     if type(data) is str:     # filname input
         files = [data]
+        # Check if it's a FITS filename or a list
+        try:
+            head = fits.getheader(data)
+        except:
+            # This might be a list of filenames
+            f = open(data,'r')
+            files = f.readlines()
+            f.close()
+            files = [l.rstrip('\n') for l in files]  # strip newlines
     elif type(data) is list:  # list of files input
         files = data
     elif type(data) is np.ndarray:  # image input
@@ -780,7 +797,7 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
         # Initialize error and mask image
         error = np.zeros(fim.shape,float)
         mask = np.zeros(fim.shape,np.uint8) # uint8, can handle values up to 255
-
+        
         # Bad pixel mask
         #---------------
         if (bpm is not None):
@@ -790,11 +807,11 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
                 if bpmim.shape != fim.shape:
                     raise ValueError('BPM shape and image shape do not match')
                 # Do the correction
-                nbadbpm = np.sum(bpm>0)
+                nbadbpm = np.sum(bpmim>0)
                 if nbadbpm>0:
-                    fim[bpm>0] = 0.0
-                    mask[bpm>0] = 1
-                    error[bpm>0] = 1e30
+                    fim[bpmim>0] = 0.0
+                    mask[bpmim>0] = 1
+                    error[bpmim>0] = 1e30
                 fhead['BPMCOR'] = time.ctime()+' BPM: masked '+str(nbadbpm)+' bad pixels'
                 if verbose:
                     print(fhead['BPMCOR'])
@@ -911,12 +928,27 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
         
         # Write to output file
         if outfile is not None:
-            if os.path.exists(outfile):
-                if clobber is False:
-                    raise ValueError(outfile+' already exists and clobber=False')
+            # Use automatic name with suffix
+            if outfile is True:
+                if files[i] != '':
+                    outdir = os.path.dirname(files[i])
+                    if outdir=='': outdir='.'
+                    outbase = os.path.basename(files[i])
+                    if '.gz' in outbase:
+                        outbase = outbase[:-3]
+                    outbase,outext = os.path.splitext(outbase)
+                    outfil = outdir+'/'+outbase+outsuffix+'.fits'
                 else:
-                    os.remove(outfile)
-            print('Writing processed file to '+outfile)
+                    outfil = 'inputimage'+outsuffix+'.fits'
+            else:
+                outfil = outfile
+            # Check if the output file exists already
+            if os.path.exists(outfil):
+                if clobber is False:
+                    raise ValueError(outfil+' already exists and clobber=False')
+                else:
+                    os.remove(outfil)
+            print('Writing processed file to '+outfil)
             hdulist = fits.HDUList()
             hdu = fits.PrimaryHDU(fim,fhead)
             hdulist.append(hdu)
@@ -931,17 +963,17 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,v
             hdulist[2].header['HISTORY'] = ' 1: bad pixel'
             hdulist[2].header['HISTORY'] = ' 2: saturated'
             hdulist[2].header['HISTORY'] = ' 4: interpolated'
-            hdulist.writeto(outfile,overwrite=clobber)
+            hdulist.writeto(outfil,overwrite=clobber)
             hdulist.close()
             # Gzip compress
             if compress:
                 if verbose:
                     print('Gzip compressing')
-                if os.path.exists(outfile+'.gz') and clobber:
-                    os.remove(outfile+'.gz')
-                    out = subprocess.run(['gzip',outfile])
+                if os.path.exists(outfil+'.gz') and clobber:
+                    os.remove(outfil+'.gz')
+                    out = subprocess.run(['gzip',outfil])
                 else:
-                    print(outfile+'.gz already exists and clobber=False')
+                    print(outfil+'.gz already exists and clobber=False')
         
     return fim, fhead
 
