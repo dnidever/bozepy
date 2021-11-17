@@ -28,6 +28,16 @@ def datadir():
     datadir = codedir+'/data/'
     return datadir
 
+def mad(data,axis=None):
+    """ Calculate the median absolute deviation."""
+    data = np.asanyarray(data)
+    data_median = np.median(data, axis=axis)
+    result = np.median(np.abs(data-data_median), axis=axis, overwrite_input=True)
+    if axis is None:
+    # return scalar version
+        result = result.item()
+    return result * 1.482602218505602
+    
 def ccdlist(input=None):
     if input is None: input='*.fits'
     if type(input) is list:
@@ -433,9 +443,10 @@ def masterdark(files,zero,med=False,outfile=None,clobber=True,verbose=False):
     
     return aim, ahead
 
-def masterflat(files,zero,dark,med=False,outfile=None,clobber=True,verbose=False):
+def masterflat(files,zero,dark,med=False,sigclip=False,outfile=None,clobber=True,verbose=False):
     """
-    Load the flat images.  Overscan correct and trim them.  Bias and dark subtract. Then divide by median and average them.
+    Load the flat images.  Overscan correct and trim them.  Bias and dark subtract.
+    Then divide by median and average them.
 
     Parameters
     ----------
@@ -447,6 +458,9 @@ def masterflat(files,zero,dark,med=False,outfile=None,clobber=True,verbose=False
         Master dark.  This can be the image or the filename.
     med : boolean, optional
         Use the median of all the files.  By default med=False and the mean is calculated.
+    sigclip : boolean, optional
+        Use sigma clipped mean of all the files.  By default sigclip=False and the
+          standard mean is calculated.
     outfile : string, optional
         Filename to write the master flat image to.
     clobber : bool, optional
@@ -500,11 +514,11 @@ def masterflat(files,zero,dark,med=False,outfile=None,clobber=True,verbose=False
         # Initialize array
         if i==0:
             ny,nx = im2.shape
-            if med:
+            if med or sigclip:
                 imarr = np.zeros((ny,nx,nfiles),float)
             else:
                 totim = np.zeros(im2.shape,float)
-        if med:
+        if med or sigclip:
             imarr[:,:,i] = im2 / np.median(im2)   # divide by median flux
         else:
             totim += im2 / np.median(im2)
@@ -513,7 +527,17 @@ def masterflat(files,zero,dark,med=False,outfile=None,clobber=True,verbose=False
     # Final calculation
     if med:
         aim = np.median(imarr,axis=2)
-        ahead['HISTORY'] = 'Median combine'              
+        ahead['HISTORY'] = 'Median combine'
+    elif sigclip:
+        mim = np.median(imarr,axis=2)
+        sig = mad(imarr)
+        diff = imarr - mim.reshape(mim.shape+(-1,))
+        mask = np.abs(diff) > 3*sig
+        #mask = np.abs(imarr-1.0) > 3*sig        
+        temp = imarr.copy()
+        temp[mask] = np.nan
+        aim = np.nanmean(temp,axis=2)
+        ahead['HISTORY'] = 'Sigma clipped mean combine'
     else:
         aim = totim / nfiles
         ahead['HISTORY'] = 'Mean combine'

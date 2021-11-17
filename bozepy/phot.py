@@ -15,7 +15,7 @@ from glob import glob
 from astropy.io import fits
 from astropy.table import Table
 from astropy.stats import sigma_clipped_stats, SigmaClip, mad_std
-from photutils import aperture_photometry, CircularAperture, CircularAnnulus
+from photutils import aperture_photometry, CircularAperture, CircularAnnulus, EllipticalAperture, EllipticalAnnulus
 from photutils import Background2D, MedianBackground
 from photutils import DAOStarFinder
 import scipy.ndimage as ndimage
@@ -136,9 +136,13 @@ def daodetect(im,fwhm=5.0,nsig=5.0):
     sources = daofind(im) 
     return sources
     
-def aperphot(im,positions,rap=5.0,rin=10.0,rout=20.0):
+def aperphot(im,positions,rap=5.0,rin=10.0,rout=20.0,asemi=None,bsemi=None,theta=None):
     """
-    Calculate circular aperture photometry for a list of sources.
+    Calculate aperture photometry for a list of sources.
+    
+    Use rap/rin/rout for a circules aperture.  Use asemi/bsemi/theta and rin/rout
+    for an elliptical aperture (rin/rout scale asemi/bsemi for the background
+    annulus).
 
     Parameters
     ----------
@@ -152,6 +156,14 @@ def aperphot(im,positions,rap=5.0,rin=10.0,rout=20.0):
        Radius of the inner background aperture.  Default is 10.0 pixels.
     rout : float, optional
        Radius of the outer background aperture.  Default is 20.0 pixels.
+    asemi : float, optional
+       Semi-major axis length (in pixels) for elliptical aperture.   If elliptical
+         apertures are used, then rin/rout will be used to scale asemi/bsemi
+         for the ellptical background annulus.
+    bsemi : float, optional
+       Semi-minor axis length (in pixels) for elliptical aperture.
+    theta : float, optional
+       Orientation angle (in radians) for elliptical aperture.
 
     Returns
     -------
@@ -178,11 +190,21 @@ def aperphot(im,positions,rap=5.0,rin=10.0,rout=20.0):
             positions = list(zip(np.array(pcat['xcentroid']),np.array(pcat['ycentroid'])))
         else:
             raise ValueError('No X/Y positions found')
-            
-    # Define the aperture right around our star
-    aperture = CircularAperture(positions, r=rap)
-    # Define the sky background circular annulus aperture
-    annulus_aperture = CircularAnnulus(positions, r_in=rin, r_out=rout)
+
+    # Elliptical aperture
+    if asemi is not None and bsemi is not None and theta is not None:
+        # Define the aperture right around our star
+        aperture = EllipticalAperture(positions, a=asemi, b=bsemi, theta=theta)
+        # Define the sky background circular annulus aperture
+        annulus_aperture = EllipticalAnnulus(positions, a_in=rin*asemi, a_out=rout*asemi,
+                                             b_in=rin*bsemi, b_out=rout*bsemi, theta=theta)
+    # Circular aperture
+    else:
+        # Define the aperture right around our star
+        aperture = CircularAperture(positions, r=rap)
+        # Define the sky background circular annulus aperture
+        annulus_aperture = CircularAnnulus(positions, r_in=rin, r_out=rout)
+        
     # This turns our sky background aperture into a pixel mask that we can use to calculate the median value
     annulus_masks = annulus_aperture.to_mask(method='center')
     # Measure the median background value for each star
@@ -211,7 +233,7 @@ def aperphot(im,positions,rap=5.0,rin=10.0,rout=20.0):
     phot['mag'] = -2.5*np.log10(phot['aper_flux'].data)+25
     return phot
 
-def morphology(im,positions=None):
+def morphology(im,positions=None,threshold=0):
 
     """
     Calculate centroid and morphology for sources.
