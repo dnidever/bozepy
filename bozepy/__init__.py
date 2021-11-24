@@ -1,2 +1,2 @@
-__all__ = ["ccdproc","phot"]
+__all__ = ["ccdproc","phot","spec']
 __version__ = '1.0.3'

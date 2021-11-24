@@ -105,17 +105,22 @@ def fixheader(head):
     head2 = head.copy()
     nx = head['NAXIS1']
     ny = head['NAXIS2']
-    # With overscan: [3468,2728]
+    # SBIG camera with overscan: [3468,2728]
     if (nx==3468) and (ny==2728):
         head2['BIASSEC1'] = '[1:41,1:2728]'
         head2['BIASSEC2'] = '[3430:3465,1:2728]'
         head2['TRIMSEC'] = '[42:3429,15:2726]'
         head2['DATASEC'] = '[42:3429,15:2726]'
-    # Without overscan: [3380,2704]        
+    # SBIG camera without overscan: [3380,2704]        
     elif (nx==3380) and (ny==2704):
         head2['BIASSEC'] = '[1:3380,1:2]'
         head2['TRIMSEC'] = '[1:3380,3:2704]'
         head2['DATASEC'] = '[1:3380,3:2704]'
+    # LhiresIII and Atik camera [2749,2199]
+    elif (nx==2749) and (ny==2199):
+        head2['BIASSEC'] = '[0:0,0:0]'
+        head2['TRIMSEC'] = '[1:2749,1:2199]'
+        head2['DATASEC'] = '[1:2749,1:2199]'       
     else:
         raise ValueError('Image size not understood')
     head2['RDNOISE'] = (4.5, 'readnoise in e-')
@@ -148,6 +153,11 @@ def overscan(im,head,verbose=False):
         raise ValueError('No BIASSEC found in header')
     bias = [int(s) for s in re.findall(r'\d+',biassec)]    
 
+    # No overscan region, [0:0, 0:0]
+    if bias[0]==bias[1] and bias[2]==bias[3]:
+        print('No overscan region')
+        return im,head
+    
     # Y first, then X
     o = im[bias[2]-1:bias[3],bias[0]-1:bias[1]]
     # check for second biassec
@@ -306,9 +316,10 @@ def masterbias(files,med=False,outfile=None,clobber=True,verbose=False):
         if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
             head = fixheader(head)
         # Check image type
-        imagetyp = head['IMAGETYP']
-        if 'bias' not in imagetyp.lower() and 'zero' not in imagetyp.lower():
-            raise ValueError(files[i]+' is not a bias')
+        imagetyp = head.get('IMAGETYP')
+        if imagetyp is not None:
+            if 'bias' not in imagetyp.lower() and 'zero' not in imagetyp.lower():
+                raise ValueError(files[i]+' is not a bias')
         # Image processing, overscan+trim
         im2,head2 = ccdproc(im,head)
         # Initialize array
@@ -400,9 +411,10 @@ def masterdark(files,zero,med=False,outfile=None,clobber=True,verbose=False):
         if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
             head = fixheader(head)        
         # Check image type
-        imagetyp = head['IMAGETYP']
-        if 'dark' not in imagetyp.lower():
-            raise ValueError(files[i]+' is not a dark')
+        imagetyp = head.get('IMAGETYP')
+        if imagetyp is not None:
+            if 'dark' not in imagetyp.lower():
+                raise ValueError(files[i]+' is not a dark')
         # Image processing, overscan+trim+zercorr        
         im2,head2 = ccdproc(im,head,zero=zero)
         # Initialize array
@@ -504,9 +516,10 @@ def masterflat(files,zero,dark,med=False,sigclip=False,outfile=None,clobber=True
         if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
             head = fixheader(head)        
         # Check image type
-        imagetyp = head['IMAGETYP']
-        if 'flat' not in imagetyp.lower():
-            raise ValueError(files[i]+' is not a flat')
+        imagetyp = head.get('IMAGETYP')
+        if imagetyp is not None:
+            if 'flat' not in imagetyp.lower():
+                raise ValueError(files[i]+' is not a flat')
         # Image processing, overscan+trim+zercorr+darkcorr
         im2,head2 = ccdproc(im,head,zero=zero,dark=dark)
         if verbose:
@@ -822,7 +835,8 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,o
             print('Already OVERSCAN corrected')
             fim = im.copy()
             fhead = head.copy()
-
+        fim = fim.astype(float)  # make sure it's float
+            
         # Initialize error and mask image
         error = np.zeros(fim.shape,float)
         mask = np.zeros(fim.shape,np.uint8) # uint8, can handle values up to 255
