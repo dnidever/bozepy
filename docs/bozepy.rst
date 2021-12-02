@@ -20,6 +20,14 @@ bozepy.phot module
    :undoc-members:
    :show-inheritance:
 
+bozepy.spec module
+------------------
+
+.. automodule:: bozepy.spec
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 
 Module contents
 ---------------
