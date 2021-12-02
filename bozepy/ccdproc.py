@@ -17,7 +17,10 @@ from glob import glob
 import time
 import re
 import subprocess
+import warnings
 from astropy.modeling.models import Gaussian2D
+from scipy.interpolate import RectBivariateSpline
+from dlnpyutils import utils as dln
 #import matplotlib
 #matplotlib.use('nbagg')
 
@@ -111,21 +114,27 @@ def fixheader(head):
         head2['BIASSEC2'] = '[3430:3465,1:2728]'
         head2['TRIMSEC'] = '[42:3429,15:2726]'
         head2['DATASEC'] = '[42:3429,15:2726]'
+        head2['RDNOISE'] = (4.5, 'readnoise in e-')
+        head2['GAIN'] = (0.15759900212287903, 'Electronic gain in e-/ADU')
+        head2['BUNIT'] = 'ADU'        
     # SBIG camera without overscan: [3380,2704]        
     elif (nx==3380) and (ny==2704):
         head2['BIASSEC'] = '[1:3380,1:2]'
         head2['TRIMSEC'] = '[1:3380,3:2704]'
         head2['DATASEC'] = '[1:3380,3:2704]'
+        head2['RDNOISE'] = (4.5, 'readnoise in e-')
+        head2['GAIN'] = (0.15759900212287903, 'Electronic gain in e-/ADU')
+        head2['BUNIT'] = 'ADU'        
     # LhiresIII and Atik camera [2749,2199]
     elif (nx==2749) and (ny==2199):
         head2['BIASSEC'] = '[0:0,0:0]'
         head2['TRIMSEC'] = '[1:2749,1:2199]'
-        head2['DATASEC'] = '[1:2749,1:2199]'       
+        head2['DATASEC'] = '[1:2749,1:2199]'
+        head2['RDNOISE'] = (5.0, 'readnoise in e-')
+        head2['GAIN'] = (0.27, 'Electronic gain in e-/ADU')
+        head2['BUNIT'] = 'ADU'        
     else:
-        raise ValueError('Image size not understood')
-    head2['RDNOISE'] = (4.5, 'readnoise in e-')
-    head2['GAIN'] = (0.15759900212287903, 'Electronic gain in e-/ADU')
-    head2['BUNIT'] = 'ADU'
+        warnings.warn('Image size not understood')
     return head2
 
     
@@ -140,7 +149,8 @@ def overscan(im,head,verbose=False):
     # Use trimsec
     trimsec = head.get('TRIMSEC')
     if trimsec is None:
-        raise ValueError('No TRIMSEC found in header')
+        warnings.warn('No TRIMSEC found in header')
+        return im,head
     trim = [int(s) for s in re.findall(r'\d+',trimsec)]
 
     # biassec
@@ -317,8 +327,9 @@ def masterbias(files,med=False,outfile=None,clobber=True,verbose=False):
             head = fixheader(head)
         # Check image type
         imagetyp = head.get('IMAGETYP')
+        exptime = head.get('EXPTIME')
         if imagetyp is not None:
-            if 'bias' not in imagetyp.lower() and 'zero' not in imagetyp.lower():
+            if 'bias' not in imagetyp.lower() and 'zero' not in imagetyp.lower() and exptime != 0.0:
                 raise ValueError(files[i]+' is not a bias')
         # Image processing, overscan+trim
         im2,head2 = ccdproc(im,head)
@@ -658,7 +669,152 @@ def makebpm(zero,dark=None,flat=None,maxzero=100,maxdark=1,maxflat=1.2,
         hdu = fits.PrimaryHDU(bpm,bhead).writeto(outfile)
     
     return bpm, bhead
+
+
+def masterspecflat(files,zero=None,dark=None,spectral_axis=1,outfile=None,
+                 med=False,sigclip=False,clobber=True,verbose=False):
+    """
+
+    Make master spectrum flat.  Remove spectral and spatial variations.
+
+    Parameters
+    ----------
+    files : list
+        List of flat FITS files.
+    zero : numpy image or str
+        Master bias.  This can be the image or the filename.
+    dark : numpy image or str
+        Master dark.  This can be the image or the filename.
+    spectral_axis : int
+        The spectral axis.  Default is 1, the x-axis.
+    med : boolean, optional
+        Use the median of all the files.  By default med=False and the mean is calculated.
+    sigclip : boolean, optional
+        Use sigma clipped mean of all the files.  By default sigclip=False and the
+          standard mean is calculated.
+    outfile : string, optional
+        Filename to write the master flat image to.
+    clobber : bool, optional
+        If the output file already exists, then overwrite it.
+        If the output file already exists, then overwrite it.  Default is True.
+    verbose : boolean, optional
+        Verbose output to the screen.  Default is False.
+
+    Returns
+    -------
+    flat : numpy image
+        The 2D flat image.
+    fhead : header dictionary
+        The header for the flat image.
+
+    Example
+    -------
+
+    flat, fhead = masterspecflat(files,zero,dark)
+
+    """  
+
     
+    # Remove variations in both the spectral and spatial dimensions
+    
+    # Spatial axis
+    if spectral_axis==0:
+        spatial_axis = 1
+    else:
+        spatial_axis = 0
+
+    nfiles = len(files)
+    if verbose:
+        print('Creating master spectrum flat using '+str(nfiles)+' files')
+
+    # Load master bias if filename input
+    if type(zero) is str:
+        zerofile = zero
+        zero,zhead = fits.getdata(zerofile,header=True)
+    # Load master dark if filename input
+    if type(dark) is str:
+        darkfile = dark
+        dark,dhead = fits.getdata(darkfile,header=True)        
+
+    # File loop
+    for i in range(nfiles):
+        im,head = fits.getdata(files[i],0,header=True)
+        sh = im.shape
+        # Fix header, if necessary
+        if (head.get('TRIMSEC') is None) | (head.get('BIASSEC') is None):
+            head = fixheader(head)        
+        # Check image type
+        imagetyp = head.get('IMAGETYP')
+        if imagetyp is not None:
+            if 'flat' not in imagetyp.lower():
+                raise ValueError(files[i]+' is not a flat')
+        # Image processing, overscan+trim+zercorr+darkcorr
+        im2,head2 = ccdproc(im,head,zero=zero,dark=dark)
+        if verbose:
+            print(str(i+1)+' '+files[i]+' ['+str(sh[1])+','+str(sh[0])+'] '+str(head['exptime'])+' sec  %8.2f ADU' %(np.median(im2)))
+        # Initialize array
+        if i==0:
+            ny,nx = im2.shape
+            if med or sigclip:
+                imarr = np.zeros((ny,nx,nfiles),float)
+            else:
+                totim = np.zeros(im2.shape,float)
+
+        # Median smooth the image with rebinning and interplation
+        nbin = 25
+        medim = dln.rebin(im2,binsize=(nbin,nbin),med=True)
+        x,y = np.meshgrid(np.arange(im2.shape[0]),np.arange(im2.shape[1]))
+        xmed = dln.rebin(x,binsize=(nbin,nbin),med=True)
+        ymed = dln.rebin(y,binsize=(nbin,nbin),med=True)
+        fn = RectBivariateSpline(xmed[0,:],ymed[:,0],medim,kx=3,ky=3,s=0)
+        sm = fn(x[0,:],y[:,0],grid=True)
+        relim = im2/sm
+        # Make sure that are no residual spectral features
+        specmed = np.median(relim,axis=spatial_axis)
+        if spectral_axis==1:
+            relim /= specmed.reshape(1,-1)
+        else:
+            relim /= specmed.T.reshape(-1,1)  
+                
+        if med or sigclip:
+            imarr[:,:,i] = relim   # divide by smoothed image
+        else:  
+            totim += relim      # divide by smoothed image
+        if i==0: ahead=head2.copy()
+        ahead['CMB'+str(i+1)] = files[i]
+    # Final calculation
+    if med:
+        aim = np.median(imarr,axis=2)
+        ahead['HISTORY'] = 'Median combine'
+    elif sigclip:
+        mim = np.median(imarr,axis=2)
+        sig = mad(imarr)
+        diff = imarr - mim.reshape(mim.shape+(-1,))
+        mask = np.abs(diff) > 3*sig
+        #mask = np.abs(imarr-1.0) > 3*sig        
+        temp = imarr.copy()
+        temp[mask] = np.nan
+        aim = np.nanmean(temp,axis=2)
+        ahead['HISTORY'] = 'Sigma clipped mean combine'
+    else:
+        aim = totim / nfiles
+        ahead['HISTORY'] = 'Mean combine'
+    ahead['NCOMBINE'] = nfiles
+    ahead['HISTORY'] = time.ctime()+' flat combine'
+    aim = aim.astype(np.float32)  # convert to 32 bit
+    # Output file
+    if outfile is not None:
+        if os.path.exists(outfile):
+            if clobber is False:
+                raise ValueError(outfile+' already exists and clobber=False')
+            else:
+                os.remove(outfile)
+        if verbose:
+            print('Writing master spectrum flat to '+outfile)
+        hdu = fits.PrimaryHDU(aim,ahead).writeto(outfile)
+
+    return aim, ahead
+
 
 def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,outsuffix='_red',
             verbose=False,clobber=True,compress=False,fix=False):

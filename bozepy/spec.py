@@ -43,6 +43,71 @@ warnings.filterwarnings("ignore", message="numpy.ufunc size changed")
 
 cspeed = 2.99792458e5  # speed of light in km/s
 
+def gaussbin(x, amp, cen, sig, const=0, dx=1.0):
+    """1-D gaussian with pixel binning
+    
+    This function returns a binned Gaussian
+    par = [height, center, sigma]
+    
+    Parameters
+    ----------
+    x : array
+       The array of X-values.
+    amp : float
+       The Gaussian height/amplitude.
+    cen : float
+       The central position of the Gaussian.
+    sig : float
+       The Gaussian sigma.
+    const : float, optional, default=0.0
+       A constant offset.
+    dx : float, optional, default=1.0
+      The width of each "pixel" (scalar).
+    
+    Returns
+    -------
+    geval : array
+          The binned Gaussian in the pixel
+
+    """
+
+    xcen = np.array(x)-cen             # relative to the center
+    x1cen = xcen - 0.5*dx  # left side of bin
+    x2cen = xcen + 0.5*dx  # right side of bin
+
+    t1cen = x1cen/(np.sqrt(2.0)*sig)  # scale to a unitless Gaussian
+    t2cen = x2cen/(np.sqrt(2.0)*sig)
+
+    # For each value we need to calculate two integrals
+    #  one on the left side and one on the right side
+
+    # Evaluate each point
+    #   ERF = 2/sqrt(pi) * Integral(t=0-z) exp(-t^2) dt
+    #   negative for negative z
+    geval_lower = erf(t1cen)
+    geval_upper = erf(t2cen)
+
+    geval = amp*np.sqrt(2.0)*sig * np.sqrt(np.pi)/2.0 * ( geval_upper - geval_lower )
+    geval += const   # add constant offset
+
+    return geval
+
+
+def gaussian(x, amp, cen, sig, const=0):
+    """1-D gaussian: gaussian(x, amp, cen, sig)"""
+    return amp * np.exp(-(x-cen)**2 / (2*sig**2)) + const
+
+
+def gaussfit(x,y,initpar=None,sigma=None,bounds=(-np.inf,np.inf),binned=False):
+    """Fit a Gaussian to data."""
+    if initpar is None:
+        initpar = [np.max(y),x[np.argmax(y)],1.0,np.median(y)]
+    func = gaussian
+    if binned is True: func=gaussbin
+    return curve_fit(func, x, y, p0=initpar, sigma=sigma, bounds=bounds)
+
+
+
 def wavesol(xpix,wave,order=3,xr=None):
     """
     Fit wavelength solution to X and Wavelength arrays.
@@ -182,6 +247,7 @@ def fitlines(x,y,err=None,nsig=5):
     
 def linefit(x,y,initpar,bounds,err=None):
     # Fit Gaussian profile to data with center and sigma fixed.
+    # for extracting spectra
     # initpar = [height, center, sigma, constant offset]
     cen = initpar[1]
     sigma = initpar[2]
