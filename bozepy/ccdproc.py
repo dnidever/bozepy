@@ -973,7 +973,7 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,o
         # Load the data            
         else:
             if verbose:
-                print('Loading '+files[0])
+                print('Loading '+files[i])
             if os.path.exists(files[i]):
                 im,head = fits.getdata(files[i],0,header=True)
             else:
