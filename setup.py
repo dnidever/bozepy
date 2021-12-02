@@ -4,7 +4,7 @@
 from setuptools import setup, find_packages
 
 setup(name='bozepy',
-      version='1.0.4',
+      version='1.0.5',
       description='Data reduction software for MSU astronomical data',
       author='David Nidever',
       author_email='dnidever@montana.edu',
