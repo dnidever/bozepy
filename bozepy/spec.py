@@ -620,3 +620,32 @@ def continuum(spec,bin=50,perc=60,norder=4):
     cont = np.poly1d(coef)(x)
     
     return cont,coef
+
+def voigt(x, height, cen, sigma, gamma, const=0.0, slp=0.0):
+    """
+    Return the Voigt line shape at x with Lorentzian component HWHM gamma
+    and Gaussian sigma.
+
+    """
+
+    maxy = np.real(wofz((1j*gamma)/sigma/np.sqrt(2))) / sigma\
+                                                           /np.sqrt(2*np.pi)
+    return (height/maxy) * np.real(wofz(((x-cen) + 1j*gamma)/sigma/np.sqrt(2))) / sigma\
+                                                           /np.sqrt(2*np.pi) + const + slp*(x-cen)
+
+
+def voigtfit(x,y,initpar=None,sigma=None,bounds=(-np.inf,np.inf)):
+    """Fit a Voigt profile to data."""
+    if initpar is None:
+        initpar = [np.max(y),x[np.argmax(y)],1.0,1.0,np.median(y),0.0]
+    func = voigt
+    return curve_fit(func, x, y, p0=initpar, sigma=sigma, bounds=bounds)
+
+def voigtarea(pars):
+    """ Compute area of Voigt profile"""
+    sig = np.maximum(pars[2],pars[3])
+    x = np.linspace(-20*sig,20*sig,1000)+pars[1]
+    dx = x[1]-x[0]
+    v = voigt(x,np.abs(pars[0]),pars[1],pars[2],pars[3])
+    varea = np.sum(v*dx)
+    return varea
