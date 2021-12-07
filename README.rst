@@ -15,6 +15,18 @@ Installation
 To install the latest version::
 
     pip install git+https://github.com/dnidever/bozepy
+
+
+Attribution
+-----------
+
+.. image:: https://zenodo.org/badge/242431079.svg
+   :target: https://zenodo.org/badge/latestdoi/242431079
+
+If you make use of this code, please cite this work using the DOI::
+
+    Nidever, D. L. 2021, dnidever/bozepy, doi:10.5281/zenodo.5764931
+
     
 Documentation
 -------------
