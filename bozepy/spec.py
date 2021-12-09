@@ -649,3 +649,44 @@ def voigtarea(pars):
     v = voigt(x,np.abs(pars[0]),pars[1],pars[2],pars[3])
     varea = np.sum(v*dx)
     return varea
+
+def ccorrelate(x,y,lag):
+    """
+    Cross-Correlation
+
+    Parameters
+    ----------
+    x : numpy array
+      First spectrum.
+    y : numpy array
+      Second spectrum.
+    lab : numpy array
+      Array of integer "lag" values at which to calculate the cross-correlation.
+         For example, lag=[-3,-2,-1,0,1,2,3]
+
+    Returns
+    -------
+    cc : numpy array
+      The cross-correlation array.
+
+    Example
+    -------
+
+    cc = ccorrelate(x,y,lag)
+
+    """
+    nx = len(x)
+    # Subract mean values
+    xd = x-np.mean(x)
+    yd = y-np.mean(y)
+    nlag = len(lag)
+    cross = np.zeros(nlag,dtype=float)
+    # Loop over lag points
+    for k in range(nlag):
+        # Note the reversal of the variables for negative lags.
+        if lag[k]>0:
+            cross[k] = np.sum(xd[0:nx-lag[k]] * yd[lag[k]:])
+        else:
+            cross[k] =  np.sum(yd[0:nx+lag[k]] * xd[-lag[k]:])
+    cross /= np.sqrt(np.sum(xd**2)*np.sum(yd**2))
+    return cross
