@@ -42,3 +42,5 @@ spec
  - :func:`~bozepy.spec.gaussfit`: Fit a single Gaussian to data.
  - :func:`~bozepy.spec.matchlines`: Match two lists of wavelengths.
  - :func:`~bozepy.spec.continuum`: Calculate the continuum of a spectrum.
+ - :func:`~bozepy.spec.ccorrelate`: Cross-correlate two spectra.
+      
