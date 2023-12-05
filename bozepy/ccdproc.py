@@ -48,9 +48,9 @@ def ccdlist(input=None):
     else:
         files = glob(input)
     nfiles = len(files)
-    dt = np.dtype([('file',np.str,100),('object',np.str,100),('naxis1',int),('naxis2',int),
-                   ('imagetyp',np.str,100),('exptime',float),('filter',np.str,100),
-                   ('dateobs',np.str,50),('jd',float)])
+    dt = np.dtype([('file',str,100),('object',str,100),('naxis1',int),('naxis2',int),
+                   ('imagetyp',str,100),('exptime',float),('filter',str,100),
+                   ('dateobs',str,50),('jd',float)])
     cat = np.zeros(nfiles,dtype=dt)
     for i,f in enumerate(files):
         base = os.path.basename(f)
@@ -77,9 +77,9 @@ def library():
     nfiles = len(files)
     if nfiles==0:
         return None
-    cat = np.zeros(nfiles,dtype=np.dtype([('file',np.str,200),('name',np.str,100),('naxis1',int),
-                                          ('naxis2',int),('imagetyp',np.str,50),
-                                          ('type',np.str,50),('filter',np.str,40),('dateobs',np.str,30),
+    cat = np.zeros(nfiles,dtype=np.dtype([('file',str,200),('name',str,100),('naxis1',int),
+                                          ('naxis2',int),('imagetyp',str,50),
+                                          ('type',str,50),('filter',str,40),('dateobs',str,30),
                                           ('jd',float),('master',bool)]))
     for i in range(nfiles):
         head = fits.getheader(files[i])
@@ -884,7 +884,7 @@ def ccdproc(data,head=None,bpm=None,zero=None,dark=None,flat=None,outfile=None,o
     elif type(data) is list:  # list of files input
         files = data
     elif type(data) is np.ndarray:  # numpy array
-        if data.ndim==1 and (data.dtype.type==np.str or data.dtype.type==np.str_):  # array of filenames
+        if data.ndim==1 and (data.dtype.type==str):  # array of filenames
             files = list(data)
         elif data.ndim==2:  # 2D image
             files = ['']
