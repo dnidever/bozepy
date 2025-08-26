@@ -9,7 +9,9 @@ setup(name='bozepy',
       author='David Nidever',
       author_email='dnidever@montana.edu',
       url='https://github.com/dnidever/bozepy',
-      packages=find_packages(exclude=["tests"]),
       requires=['numpy','astropy','dlnpyutils','photutils'],
+      zip_safe = False,
       include_package_data=True,
+      packages=find_namespace_packages(where="python"),
+      package_dir={"": "python"} 
 )
