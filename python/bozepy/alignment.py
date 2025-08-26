@@ -25,4 +25,9 @@ def sbig_align(filename,ra=None,dec=None):
 
     # Load the gaia data
     gaia = loadgaia()
-     
+    # Load the example wcs
+    wcsfile = os.path.join(utils.datadir(),'sbig_wcs.fits')
+    whead = fits.getheader(wcsfile)
+    wcs = WCS(whead)
+
+    import pdb; pdb.set_trace()
