@@ -82,25 +82,28 @@ def library():
                                           ('type',str,50),('filter',str,40),('dateobs',str,30),
                                           ('jd',float),('master',bool)]))
     for i in range(nfiles):
-        head = fits.getheader(files[i])
-        cat['file'][i] = files[i]
-        cat['name'][i] = os.path.basename(files[i])
-        cat['naxis1'][i] = head.get('naxis1')
-        cat['naxis2'][i] = head.get('naxis2')        
-        imagetyp = head.get('imagetyp')
-        cat['imagetyp'][i] = imagetyp
-        for t in ['bias','dark','flat','light']:
-            if t in imagetyp.lower():
-                cat['type'][i] = t
-        if 'bpm' in cat['name'][i]:
-            cat['type'][i] = 'bpm'
-        cat['filter'][i] = head.get('filter')    
-        cat['dateobs'][i] = head.get('date-obs')
-        cat['jd'][i] = head.get('jd')
-        if 'master' in cat['name'][i]:
-            cat['master'][i] = True
-        else:
-            cat['master'][i] = False
+        try:
+            head = fits.getheader(files[i])
+            cat['file'][i] = files[i]
+            cat['name'][i] = os.path.basename(files[i])
+            cat['naxis1'][i] = head.get('naxis1')
+            cat['naxis2'][i] = head.get('naxis2')        
+            imagetyp = head.get('imagetyp')
+            cat['imagetyp'][i] = imagetyp
+            for t in ['bias','dark','flat','light']:
+                if t in imagetyp.lower():
+                    cat['type'][i] = t
+            if 'bpm' in cat['name'][i]:
+                cat['type'][i] = 'bpm'
+            cat['filter'][i] = head.get('filter')    
+            cat['dateobs'][i] = head.get('date-obs')
+            cat['jd'][i] = head.get('jd')
+            if 'master' in cat['name'][i]:
+                cat['master'][i] = True
+            else:
+                cat['master'][i] = False
+        except:
+            pass
     return cat
 
 def fixheader(head):
