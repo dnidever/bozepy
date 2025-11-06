@@ -135,7 +135,7 @@ def wavesol(xpix,wave,order=3,xr=None):
     return coef,ww
         
 
-def trace(im,yestimate=None,yorder=2,sigorder=4,step=10,spectral_axis=1):
+def trace(im,yestimate=None,yorder=2,sigorder=4,step=50,spectral_axis=1,verbose=False):
     """
     Trace the spectrum.  Spectral dimension is assumed to be on the horizontal axis.
 
@@ -181,25 +181,55 @@ def trace(im,yestimate=None,yorder=2,sigorder=4,step=10,spectral_axis=1):
     if yestimate is None:
         ytot = np.sum(im,axis=1)
         yestimate = np.argmax(ytot)
+    specerr = np.sqrt(np.maximum(spec,0))
     # Smooth in spectral dimension
     # a uniform (boxcar) filter with a width of 50
-    smim = ndimage.uniform_filter1d(im, 50, 1)
+    smim = ndimage.uniform_filter1d(spec, 50, 1)
     nstep = nx//step
     # Loop over the columns in steps and fit Gaussians
     tcat = np.zeros(nstep,dtype=np.dtype([('x',float),('amp',float),('y',float),('sigma',float),
-                                          ('pars',float,4),('perror',float,4)]))
+                                          ('pars',float,4),('perror',float,4),('rms',float),
+                                          ('chisq',float),('success',bool)]))
+    tcat['success'] = False
+    yoff = 50
+    pars = None
     for i in range(nstep):
-        pars,cov = dln.gaussfit(y[yestimate-10:yestimate+10],im[yestimate-10:yestimate+10,step*i+step//2])
+        if i == 0 or pars is None:
+            initpar = None
+        else:
+            initpar = pars
+        bounds = [np.zeros(4)-np.inf,np.zeros(4)+np.inf]
+        bounds[0][:3] = 0.0
+        bounds[1][1] = nx
+        bounds[1][2] = 200
+        try:
+            pars,cov = dln.gaussfit(y[yestimate-yoff:yestimate+yoff],
+                                    spec[yestimate-yoff:yestimate+yoff,step*i+step//2],
+                                    initpar=initpar,bounds=bounds)
+        except:
+            pars = None
+            continue
+        if verbose:
+            print(i+1,pars)
         perror = np.sqrt(np.diag(cov))
+        model = dln.gaussian(y[yestimate-yoff:yestimate+yoff],*pars)
+        diff = spec[yestimate-yoff:yestimate+yoff,step*i+step//2]-model
+        error = specerr[yestimate-yoff:yestimate+yoff,step*i+step//2]
+        rms = np.sqrt(np.mean(diff**2))
+        chisq = np.sum(diff**2/error**2) / (2*yoff)
         tcat['x'][i] = step*i+step//2
         tcat['amp'][i] = pars[0]
         tcat['y'][i] = pars[1]
         tcat['sigma'][i] = pars[2]
         tcat['pars'][i] = pars
-        tcat['perror'][i] = perror        
-    # Fit polynomail to y vs. x and gaussian sigma vs. x
-    ypars = np.polyfit(tcat['x'],tcat['pars'][:,1],yorder)
-    sigpars = np.polyfit(tcat['x'],tcat['pars'][:,2],sigorder)
+        tcat['perror'][i] = perror
+        tcat['rms'][i] = rms
+        tcat['chisq'][i] = chisq
+        tcat['success'][i] = True
+    # Fit polynomial to y vs. x and gaussian sigma vs. x
+    gd, = np.where(tcat['success']==True)
+    ypars = np.polyfit(tcat['x'][gd],tcat['pars'][gd,1],yorder)
+    sigpars = np.polyfit(tcat['x'][gd],tcat['pars'][gd,2],sigorder)
     # Model
     mcat = np.zeros(nx,dtype=np.dtype([('x',float),('y',float),('sigma',float)]))
     xx = np.arange(nx)
